@@ -26,7 +26,7 @@ class IL_sweep_trigger_manypd(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Laser', 'Power Meter 0', 'Power Meter 1', 'Power Meter 2', 'Power Meter 3']
+        return ['Laser', 'Power Meter 0', 'Power Meter 1', 'Power Meter 2', 'Power Meter 3', 'Power Meter 4', 'Power Meter 5']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
