@@ -7,72 +7,14 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 
 import threading
 
-from LabExT.Instruments.InstrumentAPI import Instrument
-
 from labjack import ljm
 import time
 import sys
 import numpy as np
 
-class LabJack(Instrument):
-    """
-    ## Dummy Instrument
-
-    This class "plays" as if it's an instrument, similar to
-    [mocking](https://docs.python.org/3.7/library/unittest.mock.html). If you want to make instruments optional in your
-    measurement classes, you can use this instrument and setting / getting properties will not error. This helps
-    avoiding enable checks everywhere in your measurement code.
-
-    To be used e.g. to make the "SMU" instrument optional by a parameter setting:
-    ```
-        if self.use_smu:
-            self.instr_smu = self.get_instrument('SMU')
-        else:
-            self.instr_smu = DummyInstrument()
-    ```
-
-    Later, this line returns either None or an actual measurement:
-    ```
-        t = self.instr_smu.spot_measurement()
-    ```
-    without having to do another check to self.use_smu.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(visa_address="")
-        self.handle = None
-        self._dummy_open = False
-
-    def __getattr__(self, item):
-        """
-        This function is called when we want to get an attribute which does not exist.
-        So you can access any non-existing attribute of this class and will get a None-returning function back.
-        """
-        self.logger.debug(f"DummyInstrument reading attribute {item:s}, returning None-fct.")
-
-        def dummy_fct(*args, **kwargs):
-            return None
-
-        return dummy_fct
-
-    def __enter__(self):
-        """
-        Makes this class a context manager which does simply nothing.
-        """
-        self.logger.debug("DummyInstrument entering context.")
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Makes this class a context manager which does simply nothing.
-        """
-        self.logger.debug("DummyInstrument exiting context.")
-
-    def get_instrument_parameter(self):
-        return {'idn': self.idn()}
-
-    @Instrument._open.getter  # weird way to override the parent's class property getter
-    def _open(self):
-        return self._dummy_open
+class LabJack:
+    def __init__(self):
+        self.open()
 
     def open(self):
         self.handle = ljm.openS("ANY", "ANY", "ANY")
@@ -81,43 +23,8 @@ class LabJack(Instrument):
     def close(self):
         ljm.close(self.handle)
 
-    #
-    #   LabJack Functions
-    #
     def read_from_port(self, port):
         return ljm.eReadName(self.handle, port)
-
-    # def triggered_sweep_init(
-    #     start_wavelength_nm = 1510,
-    #     stop_wavelength_nm = 1630,
-    #     sweep_speed_nm_per_sec = 10,           # nm/s ()
-    #     scanRate = 1000,
-    #     pwr_in = 0,                      # pts/sec/channel 
-    #     channels = ["AIN0"],
-    #     verbose = True,
-    #     nbr_cycles = 1
-    # ):
-
-    #     self.start_wavelength_nm = start_wavelength_nm
-    #     self.stop_wavelength_nm = stop_wavelength_nm
-    #     self.sweep_speed_nm_per_sec = sweep_speed_nm_per_sec
-    #     self.sweep_cycles = nbr_cycles
-    #     self.scanRate = scanRate
-    #     self.channels = channels
-    #     self.nc = len(channels)
-    #     self.verbose = verbose
-    #     self.pwr_in = pwr_in
-
-    #     self.scansPerRead = int(scanRate)
-    #     self.scanRate = int(scanRate)
-
-    #     self.speed = (self.stop_wavelength_nm-self.start_wavelength_nm) / self.sweep_speed_nm_per_sec
-    #     self.vector_length = int(self.scansPerRead*self.speed)
-    #     self.wavelength = np.linspace(self.start_wavelength_nm,self.stop_wavelength_nm,self.vector_length)
-    #     self.MAX_REQUESTS = np.ceil(self.speed)  # The number of eStreamRead calls that will be performed.
-
-    #     self.aScanList = ljm.namesToAddresses(self.nc, self.channels)[0]
-    #     self.TRIGGER_NAME = "DIO0"
 
     def configure_device_for_triggered_stream(self):
         """Configure the device to wait for a trigger before beginning stream.
@@ -264,55 +171,3 @@ class LabJack(Instrument):
         global_data = global_data[0:vector_length,:]
 
         return global_data
-
-    @Instrument.thread_lock.getter  # weird way to override the parent's class property getter
-    def thread_lock(self):
-        return threading.Lock()
-
-    def clear(self):
-        return None
-
-    def idn(self):
-        return "LabJack class"
-
-    def reset(self):
-        return None
-
-    def ready_check_sync(self):
-        return True
-
-    def ready_check_async_setup(self):
-        return None
-
-    def ready_check_async(self):
-        return True
-
-    def check_instrument_errors(self):
-        return None
-
-    def command(self, *args, **kwargs):
-        return None
-
-    def command_channel(self, *args, **kwargs):
-        return None
-
-    def request(self, *args, **kwargs):
-        return ""
-
-    def request_channel(self, *args, **kwargs):
-        return ""
-
-    def query(self, *args, **kwargs):
-        return ""
-
-    def query_channel(self, *args, **kwargs):
-        return ""
-
-    def write(self, *args):
-        return None
-
-    def write_channel(self, *args, **kwargs):
-        return None
-
-    def query_raw_bytes(self, *args, **kwargs):
-        return None
