@@ -110,7 +110,7 @@ class LabJack:
         sleepTime = sleepFactor * scansPerRead / float(scanRate)
         time.sleep(sleepTime)
 
-    def start_logging(self, max_requests, scans_per_read, new_scan_rate, nc, vector_length):
+    def start_logging(self, max_requests, scans_per_read, new_scan_rate, channels:list, nc: int, vector_length):
         global_data = []
 
         totScans = 0
@@ -140,7 +140,6 @@ class LabJack:
                 # if self.verbose:
                 print("\neStreamRead %i" % i)
                 ainStr = ""
-                channels=[0,1,2]
                 for j in range(0, nc):
                     ainStr += "%s = %0.5f, " % (channels[j], aData[j])
                 print("  1st scan out of %i: %s" % (scans, ainStr))
@@ -156,8 +155,8 @@ class LabJack:
                     raise err
 
         try:
-            if self.verbose:
-                print("\nStop Stream")
+            # if self.verbose:
+            #     print("\nStop Stream")
             ljm.eStreamStop(self.handle)
         except ljm.LJMError:
             ljme = sys.exc_info()[1]
