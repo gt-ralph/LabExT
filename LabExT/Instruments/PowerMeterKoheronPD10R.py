@@ -33,6 +33,10 @@ class PowerMeterKoheronPD10R(Instrument):
         volts_per_decade = 0.3
         power_dBm = (voltage - zero_dbm) / (volts_per_decade*0.1)
         return power_dBm
+    
+    @property
+    def power(self):
+        return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
 
     def fetch_power(self):
         return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
@@ -93,4 +97,7 @@ class PowerMeterKoheronPD10R(Instrument):
         return None
 
     def query_raw_bytes(self, *args, **kwargs):
+        return None
+    
+    def logging_stop(self):
         return None
