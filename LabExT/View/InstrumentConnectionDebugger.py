@@ -10,6 +10,9 @@ import logging
 import shutil
 from tkinter import Toplevel, Label, Button, Frame, messagebox, filedialog
 
+from gpib_ctypes import make_default_gpib
+make_default_gpib()
+
 from LabExT.Instruments.ReusingResourceManager import OpenedResource
 from LabExT.Utils import get_configuration_file_path
 from LabExT.View.Controls.CustomFrame import CustomFrame
