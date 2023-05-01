@@ -207,15 +207,9 @@ class PowerSupplyKeithley(Instrument):
 
         :return: the optical power, measured right now
         """
-        print("about to try reading!")
         r = self.query(':READ?').strip()
-        print(r)
-        split_r = r.split(',')
-        print(split_r)
         float_r = [float(idx) for idx in r.split(",")]
-        print(float_r)
         current_val = float_r[1]
-        print(current_val)
 
         # r_float_list = np.asarray([float(idx) for idx in r.split(",")])
         # current_val = r_float_list[1]
@@ -245,7 +239,6 @@ class PowerSupplyKeithley(Instrument):
         """
         Read the power which was measured on the last trigger.
         """
-        print("calling self.power_finder()")
+
         t = self.power_finder()
-        print(t)
         return t
