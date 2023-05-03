@@ -237,11 +237,18 @@ class IIP3_sweep(Measurement):
                 # Define the loop parameters
                 sample_time = 0.01  # seconds
                 last_error = 0
-                while abs(error) > 1e-9 :
-                    process_variable = keithley_current_result_list[-1]
-                    mzm_bias = mzm_bias_voltage_result_list[-1]
-                    
+
+                process_variable_start = keithley_current_result_list[-1]
+                mzm_bias_start = mzm_bias_voltage_result_list[-1]
+
+                iteration = 0 
+                while abs(error) > 1e-9 : # 1 nano amps 
+
                     # Calculate the error and integral term
+                    process_variable = process_variable_start
+                    mzm_bias = mzm_bias_start
+                    print(f"PD current = {process_variable}, MZM Bias = {mzm_bias}")
+
                     error = setpoint - process_variable
 
                     integral += error * sample_time
@@ -254,16 +261,30 @@ class IIP3_sweep(Measurement):
                     
                     # Calculate the control output
                     control_output = proportional + ki * integral + kd * derivative
+
+                    print(f"error = {error}, control_output = {control_output}")
                     
                     # Update the parameter value based on the control output
-                    mzm_bias += control_output
+                    mzm_bias_start += control_output
+                    process_variable_start = self.instr_pm2.fetch_power()
+
+                    iteration += 1
+                    print("\n")
+                    print(f"iteration number = {iteration}")
+                    print("\n")
 
                     # Set the last error for the next iteration
                     last_error = error
-                    if abs(mzm_bias) > 1.5:
-                        mzm_bias = 1.5
+                    if abs(mzm_bias_start) > 1.5:
+                        mzm_bias_start = 1.5
+                        process_variable_start = self.instr_pm2.fetch_power()
+                        print("mzm bias threshold 1.5 V")
                         break
-                keithley_current_result_list[-1] = process_variable 
+                    else:
+                        continue
+
+                # final current and mzm bias voltage 
+                keithley_current_result_list[-1] = process_variable_start 
                 mzm_bias_voltage_result_list[-1] = mzm_bias
 
                 if(rf_state == 1):
