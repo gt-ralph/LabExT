@@ -226,11 +226,52 @@ class IIP3_sweep(Measurement):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
+
+                setpoint = 0 
+                kp = 0.5  # Proportional gain
+                ki = 0.2  # Integral gain
+                kd = 0.1  # Derivative gain
+                
+                integral = 0.0
+
+                # Define the loop parameters
+                sample_time = 0.01  # seconds
+                last_error = 0
+                while abs(error) > 1e-9 :
+                    process_variable = keithley_current_result_list[-1]
+                    mzm_bias = mzm_bias_voltage_result_list[-1]
+                    
+                    # Calculate the error and integral term
+                    error = setpoint - process_variable
+
+                    integral += error * sample_time
+                    
+                    # calculate the proportional term
+                    proportional = kp * error
+    
+                    # Calculate the derivative term
+                    derivative = (error - last_error) / sample_time
+                    
+                    # Calculate the control output
+                    control_output = proportional + ki * integral + kd * derivative
+                    
+                    # Update the parameter value based on the control output
+                    mzm_bias += control_output
+
+                    # Set the last error for the next iteration
+                    last_error = error
+                    if abs(mzm_bias) > 1.5:
+                        mzm_bias = 1.5
+                        break
+                keithley_current_result_list[-1] = process_variable 
+                mzm_bias_voltage_result_list[-1] = mzm_bias
+
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
                     self.instr_sg1.set_output(1)
         np_trace_data = np.asarray(trace_data)
-        
+
+
         mdic = {"data": np_trace_data}
         io.savemat("C:\\Users\\ckaylor30\\OneDrive - Georgia Institute of Technology\\laboratory_measurements\\IIP3_sweep_"+time.strftime("%Y_%m_%d_%H_%M_%S")+".mat", mdic)
             #Will  need to read in all the stuff here
