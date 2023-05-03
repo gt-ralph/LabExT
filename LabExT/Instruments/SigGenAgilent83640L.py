@@ -6,6 +6,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 """
 
 import numpy as np
+import time
 
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 
@@ -57,19 +58,24 @@ class SigGenAgilent83640L(Instrument):
         :return: None
         """
         super().open()
-        self._inst.read_termination = '\n'
+        self._inst.timeout = 25000
+        # self._inst.read_termination = '\n'
+        # self._inst.write_termination = '\n'
 
         authentication = self._inst.query('POWER:STATE?')
         print(authentication)
 
         if authentication.strip() == '0':
-            self.command("POWER:STATE ON")
+            self.command("POWER:STATE 1")
+            time.sleep(0.2)
             authentication_post_init = self._inst.query('POWER:STATE?')
+            print(authentication_post_init)
             if authentication_post_init.strip() == '0':
                 raise InstrumentException('Authentication failed, device did not enable otuput but returned 0')
         elif authentication.strip() != '1':
             raise InstrumentException(f'Authentication failed, device returned this thing:{authentication}')
-        self.command("POWER:STATE OFF")
+        time.sleep(0.2)
+
 
     def close(self):
         """
@@ -77,7 +83,6 @@ class SigGenAgilent83640L(Instrument):
             and deactivating output
         """
         self.command("*RST")
-        self.command("POWER:STATE OFF")
         super().close()
 
 
