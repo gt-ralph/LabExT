@@ -252,20 +252,20 @@ class IIP3_sweep(Measurement):
                     error = setpoint - process_variable
 
                     integral += error * sample_time
-                    
-                    # calculate the proportional term
-                    proportional = kp * error
     
                     # Calculate the derivative term
                     derivative = (error - last_error) / sample_time
                     
                     # Calculate the control output
-                    control_output = proportional + ki * integral + kd * derivative
+                    control_output = kp * error + ki * integral + kd * derivative
 
                     print(f"error = {error}, control_output = {control_output}")
                     
-                    # Update the parameter value based on the control output
-                    mzm_bias_start += control_output
+                    # Update the parameter and process variable value based on the control output
+                    mzm_bias_start = mzm_bias + control_output
+                    self.instr_ps1.set_voltage(voltage=mzm_bias_start)
+                    mzm_bias_start = self.instr_ps1.get_votage()
+                    mzm_bias_current = self.instr_ps1.get_current()
                     process_variable_start = self.instr_pm2.fetch_power()
 
                     iteration += 1
@@ -275,8 +275,11 @@ class IIP3_sweep(Measurement):
 
                     # Set the last error for the next iteration
                     last_error = error
-                    if abs(mzm_bias_start) > 1.5:
+                    if abs(mzm_bias_start) >= 1.5:
                         mzm_bias_start = 1.5
+                        self.instr_ps1.set_voltage(voltage=mzm_bias_start)
+                        mzm_bias_start = self.instr_ps1.get_votage()
+                        mzm_bias_current = self.instr_ps1.get_current()
                         process_variable_start = self.instr_pm2.fetch_power()
                         print("mzm bias threshold 1.5 V")
                         break
@@ -285,7 +288,8 @@ class IIP3_sweep(Measurement):
 
                 # final current and mzm bias voltage 
                 keithley_current_result_list[-1] = process_variable_start 
-                mzm_bias_voltage_result_list[-1] = mzm_bias
+                mzm_bias_voltage_result_list[-1] = mzm_bias_start
+                mzm_bias_current_result_list[-1] = mzm_bias_current
 
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
