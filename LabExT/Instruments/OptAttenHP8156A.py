@@ -60,11 +60,12 @@ class OptAttenHP8156A(Instrument):
         :return: None
         """
         super().open()
-        self._inst.read_termination = '\n'
+        #self._inst.read_termination = '\n'
 
         authentication = self._inst.query('OUTPUT?')
+        print(int(authentication.strip()))
 
-        if authentication.strip() != '0' or authentication.strip() != '1':
+        if int(authentication.strip()) != 0 and int(authentication.strip()) != 1:
             raise InstrumentException(f'Authentication failed, device returned this thing:{authentication}')
     
     def close(self):
@@ -88,7 +89,7 @@ class OptAttenHP8156A(Instrument):
 
         return float(self.request(f'INPut:ATTenuation?'))
     
-    @property.setter
+    @atten.setter
     def atten(self, value):
         """
         Sets the attenuation
@@ -106,8 +107,8 @@ class OptAttenHP8156A(Instrument):
 
         return int(self.request(f':OUTPut?'))
     
-    @property.setter
-    def get_voltage(self, value):
+    @output.setter
+    def output(self, value):
         """
         sets the output
         :input: 1 to turn it on, 0 to turn it off (AND NOTHING ELSE)
