@@ -63,17 +63,21 @@ class IIP3_sweep(Measurement):
     def get_default_parameter():
         return {
             # lower bound for sweep
-            'mzm bias voltage start': MeasParamFloat(value=0.0, unit='V'),
+            'outer sweep voltage start': MeasParamFloat(value=0.0, unit='V'),
             # upper bound for sweep
-            'mzm bias voltage stop': MeasParamFloat(value=0.1, unit='V'),
+            'outer sweep voltage stop': MeasParamFloat(value=0.1, unit='V'),
             # step size
-            'mzm bias voltage step': MeasParamFloat(value=0.1, unit='V'),
+            'outer sweep voltage step': MeasParamFloat(value=0.1, unit='V'),
             # lower bound for sweep
-            'input phase start': MeasParamFloat(value=0.0, unit='V'),
+            'inner sweep start': MeasParamFloat(value=0.0, unit='V'),
             # upper bound for sweep
-            'input phase stop': MeasParamFloat(value=0.1, unit='V'),
+            'inner sweep stop': MeasParamFloat(value=0.1, unit='V'),
             # step size
-            'input phase step': MeasParamFloat(value=0.1, unit='V'),
+            'inner sweep step': MeasParamFloat(value=0.1, unit='V'),
+            #extra voltage 1 set point
+            'extra voltage 1': MeasParamFloat(value=0.1, unit='V'),
+            #extra voltage 2 set point
+            'extra voltage 2': MeasParamFloat(value=0.1, unit='V'),
             # sweep speed in nm/s
             'ESA delay': MeasParamFloat(value=0.5, unit='s'),
             #center of frequency band of interest
@@ -93,16 +97,18 @@ class IIP3_sweep(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2']
+        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
-        mzm_bias_start_volt = parameters.get('mzm bias voltage start').value
-        mzm_bias_stop_volt = parameters.get('mzm bias voltage stop').value
-        mzm_bias_step_volt= parameters.get('mzm bias voltage step').value
-        in_phase_start_volt = parameters.get('input phase start').value
-        in_phase_stop_volt = parameters.get('input phase stop').value
-        in_phase_step_volt = parameters.get('input phase step').value
+        outer_sweep_start_volt = parameters.get('outer sweep voltage start').value
+        outer_sweep_stop_volt = parameters.get('outer sweep voltage stop').value
+        outer_sweep_step_volt= parameters.get('outer sweep voltage step').value
+        inner_sweep_start_volt = parameters.get('inner sweep start').value
+        inner_sweep_stop_volt = parameters.get('inner sweep stop').value
+        inner_sweep_step_volt = parameters.get('inner sweep step').value
+        extra_voltage_1 = parameters.get('extra voltage 1').value
+        extra_voltage_2 = parameters.get('extra voltage 2').value
         ESA_delay = parameters.get('ESA delay').value
         fcen = parameters.get('center frequency').value
         fspan = parameters.get('frequency span').value
@@ -121,6 +127,7 @@ class IIP3_sweep(Measurement):
         self.instr_ps3 = instruments['Power Supply 3']
         self.instr_sg1 = instruments['Signal Generator 1']
         self.instr_sg2 = instruments['Signal Generator 2']
+        self.instr_ps4 = instruments['Power Supply 4']
  
 
 
@@ -133,6 +140,7 @@ class IIP3_sweep(Measurement):
         self.instr_ps3.open()
         self.instr_sg1.open()
         self.instr_sg2.open()
+        self.instr_ps4.open()
 
 
         # clear errors
@@ -144,12 +152,13 @@ class IIP3_sweep(Measurement):
         self.instr_ps3.clear()
         self.instr_sg1.clear()
         self.instr_sg2.clear()
+        self.instr_ps4.clear()
 
         self.instr_sg1.set_power(power=pow)
-        self.instr_sg1.set_freq(freq=fcen)
+        self.instr_sg1.set_freq(freq=fcen+0.0002)
         self.instr_sg1.set_output(rf_state)
         self.instr_sg2.set_power(power=pow)
-        self.instr_sg2.set_freq(freq=fcen+0.01)
+        self.instr_sg2.set_freq(freq=fcen)
         self.instr_sg2.set_output(rf_state)
 
         # # Ask minimal possible wavelength
@@ -173,8 +182,8 @@ class IIP3_sweep(Measurement):
         for pname, pparam in parameters.items():
             data['measurement settings'][pname] = pparam.as_dict()
 
-        points_inner = np.arange(in_phase_start_volt,in_phase_stop_volt+in_phase_step_volt,in_phase_step_volt)
-        points_outer = np.arange(mzm_bias_start_volt,mzm_bias_stop_volt+mzm_bias_step_volt,mzm_bias_step_volt)
+        points_inner = np.arange(inner_sweep_start_volt,inner_sweep_stop_volt+inner_sweep_step_volt,inner_sweep_step_volt)
+        points_outer = np.arange(outer_sweep_start_volt,outer_sweep_stop_volt+outer_sweep_step_volt,outer_sweep_step_volt)
         number_of_points = points_inner.size*points_outer.size
 
 
@@ -192,7 +201,8 @@ class IIP3_sweep(Measurement):
         #                             triggered=True,
         #                             trigger_each_meas_separately=True)
         #Reverse bias for modulator
-        self.instr_ps3.set_voltage(voltage=-1, current = 1)
+        self.instr_ps3.set_voltage(voltage=extra_voltage_1, current = 1)
+        self.instr_ps4.set_voltage(voltage=extra_voltage_2, current = 1)
         # inform user
         self.logger.info(f"Sweeping over {number_of_points:d} samples "
                          f"at {ESA_delay:e}s sampling period.")
@@ -200,10 +210,10 @@ class IIP3_sweep(Measurement):
         self.instr_sa.set_initial_settings()
         self.instr_sa.set_frequency_band(fcen*1e6,fspan)
 
-        mzm_bias_current_result_list = []
-        mzm_bias_voltage_result_list = []
-        input_phase_current_result_list = []
-        input_phase_voltage_result_list = []
+        outer_current_result_list = []
+        outer_voltage_result_list = []
+        inner_current_result_list = []
+        inner_voltage_result_list = []
         optical_power_result_list = []
         keithley_current_result_list = []
         # STARTET DIE MOTOREN!
@@ -216,10 +226,10 @@ class IIP3_sweep(Measurement):
                 self.instr_ps2.set_voltage(voltage=volt_inner,current = 1)
                 self.instr_ps1.set_voltage(voltage=volt_outer,current = 1)
                 time.sleep(ESA_delay)
-                mzm_bias_current_result_list.append(self.instr_ps1.get_current())
-                mzm_bias_voltage_result_list.append(self.instr_ps1.get_voltage())
-                input_phase_current_result_list.append(self.instr_ps2.get_current())
-                input_phase_voltage_result_list.append(self.instr_ps2.get_voltage())
+                outer_current_result_list.append(self.instr_ps1.get_current())
+                outer_voltage_result_list.append(self.instr_ps1.get_voltage())
+                inner_current_result_list.append(self.instr_ps2.get_current())
+                inner_voltage_result_list.append(self.instr_ps2.get_voltage())
                 trace_data.append(self.instr_sa.get_trace().tolist())
                 optical_power_result_list.append(self.instr_pm1.fetch_power())
                 if(rf_state == 1):
@@ -257,15 +267,23 @@ class IIP3_sweep(Measurement):
         # convert numpy float32/float64 to python float
         # data['values']['transmission [dBm]'] = power_data.tolist()
         # data['values']['wavelength [nm]'] = lambda_data.tolist()
-        data['values']['current_mzm_bias'] = mzm_bias_current_result_list
-        data['values']['voltage_mzm_bias'] = mzm_bias_voltage_result_list
-        data['values']['current_input_phase'] = input_phase_current_result_list
-        data['values']['voltage_input_phase'] = input_phase_voltage_result_list
+        data['values']['current_outer'] = outer_current_result_list
+        data['values']['voltage_outer'] = outer_voltage_result_list
+        data['values']['current_inner'] = inner_current_result_list
+        data['values']['voltage_inner'] = inner_voltage_result_list
         data['values']['optical_power_result_list'] = optical_power_result_list
         data['values']['keithley_current_result_list'] = keithley_current_result_list
         # close connection
         self.instr_ps1.close()
         self.instr_ps2.close()
+        self.instr_sa.close()
+        self.instr_pm1.close()
+        self.instr_pm2.close()
+        self.instr_ps3.close()
+
+        self.instr_sg1.close()
+        self.instr_sg2.close()
+        self.instr_ps4.close()
 
         pythoncom.CoInitialize()
         outlook = win32.Dispatch('outlook.application')
