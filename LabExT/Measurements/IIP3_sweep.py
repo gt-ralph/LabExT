@@ -236,11 +236,77 @@ class IIP3_sweep(Measurement):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
+
+                setpoint = 0 
+                kp = 0.5  # Proportional gain
+                ki = 0.2  # Integral gain
+                kd = 0.1  # Derivative gain
+                
+                integral = 0.0
+
+                # Define the loop parameters
+                sample_time = 0.01  # seconds
+                last_error = 0
+
+                process_variable_start = keithley_current_result_list[-1]
+                mzm_bias_start = mzm_bias_voltage_result_list[-1]
+
+                iteration = 0 
+                while abs(error) > 1e-9 : # 1 nano amps 
+
+                    # Calculate the error and integral term
+                    process_variable = process_variable_start
+                    mzm_bias = mzm_bias_start
+                    print(f"PD current = {process_variable}, MZM Bias = {mzm_bias}")
+
+                    error = setpoint - process_variable
+
+                    integral += error * sample_time
+    
+                    # Calculate the derivative term
+                    derivative = (error - last_error) / sample_time
+                    
+                    # Calculate the control output
+                    control_output = kp * error + ki * integral + kd * derivative
+
+                    print(f"error = {error}, control_output = {control_output}")
+                    
+                    # Update the parameter and process variable value based on the control output
+                    mzm_bias_start = mzm_bias + control_output
+                    self.instr_ps1.set_voltage(voltage=mzm_bias_start)
+                    mzm_bias_start = self.instr_ps1.get_votage()
+                    mzm_bias_current = self.instr_ps1.get_current()
+                    process_variable_start = self.instr_pm2.fetch_power()
+
+                    iteration += 1
+                    print("\n")
+                    print(f"iteration number = {iteration}")
+                    print("\n")
+
+                    # Set the last error for the next iteration
+                    last_error = error
+                    if abs(mzm_bias_start) >= 1.5:
+                        mzm_bias_start = 1.5
+                        self.instr_ps1.set_voltage(voltage=mzm_bias_start)
+                        mzm_bias_start = self.instr_ps1.get_votage()
+                        mzm_bias_current = self.instr_ps1.get_current()
+                        process_variable_start = self.instr_pm2.fetch_power()
+                        print("mzm bias threshold 1.5 V")
+                        break
+                    else:
+                        continue
+
+                # final current and mzm bias voltage 
+                keithley_current_result_list[-1] = process_variable_start 
+                mzm_bias_voltage_result_list[-1] = mzm_bias_start
+                mzm_bias_current_result_list[-1] = mzm_bias_current
+
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
                     self.instr_sg1.set_output(1)
         np_trace_data = np.asarray(trace_data)
-        
+
+
         mdic = {"data": np_trace_data}
         io.savemat("C:\\Users\\ckaylor30\\OneDrive - Georgia Institute of Technology\\laboratory_measurements\\IIP3_sweep_"+time.strftime("%Y_%m_%d_%H_%M_%S")+".mat", mdic)
             #Will  need to read in all the stuff here
