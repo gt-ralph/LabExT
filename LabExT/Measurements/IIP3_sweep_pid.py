@@ -59,6 +59,63 @@ class IIP3_sweep(Measurement):
         self.settings_path = 'IIP3_sweep_settings.json'
         self.instr_ps1 = None
 
+    #Performs PID control given a voltage to control
+    #returns the history of currents we're measuring
+    #and some other variables
+    def PID(self, controlled_power_supply, process_measuring_device, setpoint):
+        kp = 0.5  # Proportional gain
+        ki = 0.2  # Integral gain
+        kd = 0.1  # Derivative gain
+        sample_time = 0.01
+        iteration = 0 
+        
+        while abs(error) > 1e-11 : # 1 nano amps 
+
+            # Calculate the error and integral term
+            process_value = process_measuring_device.fetch_power()
+            controller_output = controlled_power_supply.get_voltage()
+            print(f"PD current = {process_value}, MZM Bias = {controller_output}")
+
+            error = setpoint - process_value
+            print("error is:")
+            print(error)
+            print("\n")
+
+            integral += error * sample_time
+            print("integral is:")
+            print(integral)
+            print("\n")
+
+            # Calculate the derivative term
+            derivative = (error - last_error) / sample_time
+            print("derivative is:")
+            print(derivative)
+            print("\n")
+            # Calculate the control output
+            control_output = kp * error + ki * integral + kd * derivative
+
+            print(f"error = {error}, control_output = {control_output}")
+            
+            # Update the parameter and process variable value based on the control output
+            plant_voltage= plant_voltage + control_output
+            if (abs(controller_output) <= 0.75 and abs(controller_output) >= 0):
+                self.instr_ps1.set_voltage(voltage=controller_output)
+            else:
+                #Added Instrument Exception import 
+                #Betting this type of exception will deactviate our instruments nicely
+                #and close the gpib stuff, as opposed to a straight up python exception
+                raise InstrumentException(f'voltage exceeded safe limit. It was: {controller_output}')
+            time.sleep(sample_time)
+            iteration += 1
+            print("\n")
+            print(f"iteration number = {iteration}")
+            print("\n")
+            iter_limit = 30
+            if(iteration > iter_limit):
+                raise InstrumentException(f'reached {iter_limit} iterations, terminating')
+            # Set the last error for the next iteration
+            last_error = error
+
     @staticmethod
     def get_default_parameter():
         return {
@@ -216,7 +273,7 @@ class IIP3_sweep(Measurement):
         inner_voltage_result_list = []
         optical_power_result_list = []
         keithley_current_result_list = []
-
+        initial_current = self.instr_pm2.fetch_power()
         # STARTET DIE MOTOREN!
         # with self.instr_ps:
         trace_data = []
@@ -227,6 +284,7 @@ class IIP3_sweep(Measurement):
                 self.instr_ps2.set_voltage(voltage=volt_inner,current = 1)
                 self.instr_ps1.set_voltage(voltage=volt_outer,current = 1)
                 time.sleep(ESA_delay)
+                self.PID(self.instr_ps4, self.instr_pm2, initial_current)
                 outer_current_result_list.append(self.instr_ps1.get_current())
                 outer_voltage_result_list.append(self.instr_ps1.get_voltage())
                 inner_current_result_list.append(self.instr_ps2.get_current())
@@ -236,9 +294,8 @@ class IIP3_sweep(Measurement):
                 if(rf_state == 1):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
-
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
-                
+
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
                     self.instr_sg1.set_output(1)
