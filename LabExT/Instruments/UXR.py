@@ -95,8 +95,8 @@ class UXR(Instrument):
         return waveform_list
     
     #return one waveform
-    def get_waveform(self, channel_num):
-        return self._inst.waveformData(channel=channel_num)
+    def get_waveform(self, channel_str):
+        return self._inst.waveformData(channel=channel_str)
 
 
 
