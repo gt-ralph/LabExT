@@ -23,7 +23,6 @@ class span_sweep(Measurement):
 
         self.name = 'span_sweep'
         self.settings_path = 'span_sweep_settings.json'
-        self.instr_ps1 = None
 
     @staticmethod
     def get_default_parameter():
