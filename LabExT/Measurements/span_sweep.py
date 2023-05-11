@@ -112,6 +112,15 @@ class span_sweep(Measurement):
                 diff_OSNR = OSNR - 17
                 self.instr_a2.atten = attenuation2 + diff_OSNR
                 time.sleep(delay)
+
+                pythoncom.CoInitialize()
+                outlook = win32.Dispatch('outlook.application')
+                mail = outlook.CreateItem(0)
+                mail.To = 'pagarwal306@gatech.edu'
+                mail.Subject = 'Singlemode Status'
+                mail.Body = 'LP=' + str(LP) + '_OSNR=' + str(OSNR)
+                mail.Send()
+
                 for k in range(301):
                     self.instr_uxr.single()
                     for i in channels:
@@ -126,11 +135,4 @@ class span_sweep(Measurement):
         self.instr_a.close()
         self.instr_uxr.close()
 
-        pythoncom.CoInitialize()
-        outlook = win32.Dispatch('outlook.application')
-        mail = outlook.CreateItem(0)
-        mail.To = 'pagarwal306@gatech.edu'
-        mail.Subject = 'Singlemode Successful'
-        mail.Body = 'Get your data :)'
-        mail.Send()
 
