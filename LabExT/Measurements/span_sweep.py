@@ -28,23 +28,23 @@ class span_sweep(Measurement):
     def get_default_parameter():
         return {
             # outer sweep for LP
-            'LP start value': MeasParamFloat(value = 8, unit = 'dBm'),
-            'LP end value': MeasParamFloat(value = 1, unit = 'dBm'),
-            'LP step size': MeasParamFloat(value = 1, unit = 'dBm'),
+            'LP start value': MeasParamInt(value = 8, unit = 'dBm'),
+            'LP end value': MeasParamInt(value = 1, unit = 'dBm'),
+            'LP step size': MeasParamInt(value = 1, unit = 'dBm'),
 
             #inner sweep OSNR
-            'OSNR start value': MeasParamFloat(value = 17, unit = 'dBm'),
-            'OSNR end value': MeasParamFloat(value = 24, unit = 'dBm'),
-            'OSNR step size': MeasParamFloat(value = 1, unit = 'dBm'),
+            'OSNR start value': MeasParamInt(value = 17, unit = 'dBm'),
+            'OSNR end value': MeasParamInt(value = 24, unit = 'dBm'),
+            'OSNR step size': MeasParamInt(value = 1, unit = 'dBm'),
 
             #power supply voltage
             # 'power supply voltage': MeasParamFloat(value=0, unit='V'),
 
             #attenuation
-            'attenuation value 1': MeasParamFloat(value = 0, unit = 'dBm'),
-            'attenuation value 2': MeasParamFloat(value = 0, unit = 'dBm'),
+            'attenuation value 3db': MeasParamInt(value = 0, unit = 'dBm'),
+            'attenuation value 6db': MeasParamInt(value = 0, unit = 'dBm'),
             
-            'delay':MeasParamFloat(value = 1, unit='s'), 
+            'delay':MeasParamInt(value = 1, unit='s'), 
 
             'number of waveforms':MeasParamInt(value = 3)
         }
@@ -62,40 +62,41 @@ class span_sweep(Measurement):
         OSNR_end_value = parameters.get('OSNR end value').value
         OSNR_step= parameters.get('OSNR step size').value
         # voltage = parameters.get('power supply voltage').value
-        attenuation1 = parameters.get('attenuation value 1').value
-        attenuation2 = parameters.get('attenuation value 2').value
+        attenuation3db = parameters.get('attenuation value 3db').value
+        attenuation6db = parameters.get('attenuation value 6db').value
         delay = parameters.get('delay').value
+        num_waveform = parameters.get('number of waveforms').value
 
         # get instrument pointers
         # self.instr_ps = instruments['Power Supply']
-        self.instr_a1 = instruments['Attenuator 1']
-        self.instr_a2 = instruments['Attenuator 2']
+        self.instr_a3db = instruments['Attenuator 1']
+        self.instr_a6db = instruments['Attenuator 2']
         self.instr_uxr = instruments['UXR']
  
         # open connection to power supply
         # self.instr_ps.open()
-        self.instr_a1.open()
-        self.instr_a2.open()
+        self.instr_a3db.open()
+        self.instr_a6db.open()
         self.instr_uxr.open()
 
         # clear errors
         # self.instr_ps.clear()
-        self.instr_a1.clear()
-        self.instr_a2.clear()
+        self.instr_a3db.clear()
+        self.instr_a6db.clear()
         self.instr_uxr.clear()
 
         # self.instr_ps.set_voltage(voltage = voltage, current = 0)
-        self.instr_a1.atten = attenuation1
-        self.instr_a2.atten = attenuation2
+        self.instr_a3db.atten = attenuation3db
+        self.instr_a6db.atten = attenuation6db
         time.sleep(delay)
         points_inner = np.arange(OSNR_start_value, OSNR_end_value + OSNR_step, OSNR_step)
         points_outer = np.arange(LP_start_value, LP_end_value - LP_step, -LP_step)
 
-        pn = ''
+        pn = 'C:\\Users\\Prankush\\Desktop\\Prankush\\auto_test'
         channels = [1, 2, 3, 4]
         for LP in points_outer:
             diff_LP = 8 - LP
-            self.instr_a1.atten = attenuation1 + diff_LP
+            self.instr_a6db.atten = attenuation6db + diff_LP
             time.sleep(delay)
             ##################################
             # power = powermeter
@@ -111,7 +112,7 @@ class span_sweep(Measurement):
             ##################################
             for OSNR in points_inner:
                 diff_OSNR = OSNR - 17
-                self.instr_a2.atten = attenuation2 + diff_OSNR
+                self.instr_a3db.atten = attenuation3db + diff_OSNR
                 time.sleep(delay)
 
                 pythoncom.CoInitialize()
@@ -122,7 +123,7 @@ class span_sweep(Measurement):
                 mail.Body = 'LP=' + str(LP) + '_OSNR=' + str(OSNR)
                 mail.Send()
 
-                for k in range(301):
+                for k in range(num_waveform):
                     self.instr_uxr.single()
                     for i in channels:
                         data = self.instr_uxr.get_waveform(channel = str(i))
@@ -133,8 +134,8 @@ class span_sweep(Measurement):
 
         # close connection
         # self.instr_ps.close()
-        self.instr_a1.close()
-        self.instr_a2.close()
+        self.instr_a3db.close()
+        self.instr_a6db.close()
         self.instr_uxr.close()
 
 
