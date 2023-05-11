@@ -42,14 +42,15 @@ class span_sweep(Measurement):
             'power supply voltage': MeasParamFloat(value=0, unit='V'),
 
             #attenuation
-            'attenuation value': MeasParamFloat(value = 0, unit = 'dBm' ),
+            'attenuation value 1': MeasParamFloat(value = 0, unit = 'dBm'),
+            'attenuation value 2': MeasParamFloat(value = 0, unit = 'dBm'),
             
             'delay':MeasParamFloat(value = 1, unit='s') 
         }
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply', 'Attenuator', 'UXR']
+        return ['Power Supply', 'Attenuator 1', 'Attenuator 2', 'UXR']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -60,26 +61,31 @@ class span_sweep(Measurement):
         OSNR_end_value = parameters.get('OSNR end value').value
         OSNR_step= parameters.get('OSNR step size').value
         voltage = parameters.get('power supply voltage').value
-        attenuation = parameters.get('attenuation value').value
+        attenuation1 = parameters.get('attenuation value 1').value
+        attenuation2 = parameters.get('attenuation value 2').value
         delay = parameters.get('delay').value
 
         # get instrument pointers
         self.instr_ps = instruments['Power Supply']
-        self.instr_a = instruments['Attenuator']
+        self.instr_a1 = instruments['Attenuator 1']
+        self.instr_a2 = instruments['Attenuator 2']
         self.instr_uxr = instruments['UXR']
  
         # open connection to power supply
         self.instr_ps.open()
-        self.instr_a.open()
+        self.instr_a1.open()
+        self.instr_a2.open()
         self.instr_uxr.open()
 
         # clear errors
         self.instr_ps.clear()
-        self.instr_a.clear()
+        self.instr_a1.clear()
+        self.instr_a2.clear()
         self.instr_uxr.clear()
 
         self.instr_ps.set_voltage(voltage = voltage, current = 0)
-        self.instr_a.atten = attenuation
+        self.instr_a1.atten = attenuation1
+        self.instr_a2.atten = attenuation2
         time.sleep(delay)
         points_inner = np.arange(OSNR_start_value, OSNR_end_value + OSNR_step, OSNR_step)
         points_outer = np.arange(LP_start_value, LP_end_value - LP_step, -LP_step)
@@ -87,21 +93,24 @@ class span_sweep(Measurement):
         pn = ''
         channels = [1, 2, 3, 4]
         for LP in points_outer:
+            diff_LP = 8 - LP
+            self.instr_a1.atten = attenuation1 + diff_LP
+            time.sleep(delay)
             ##################################
-            power = powermeter
-            diff = power - LP
-            if diff > 0:
-                while (diff > 0):
-                    self.instr_ps.set_voltage(voltage = voltage + 0.01, current = 0)
-                    time.sleep(delay)
-                    power = powermeter
-                    diff =  power - LP
-            else:
-                continue
+            # power = powermeter
+            # diff = power - LP
+            # if diff > 0:
+            #     while (diff > 0):
+            #         self.instr_ps.set_voltage(voltage = voltage + 0.01, current = 0)
+            #         time.sleep(delay)
+            #         power = powermeter
+            #         diff =  power - LP
+            # else:
+            #     continue
             ##################################
             for OSNR in points_inner:
                 diff_OSNR = OSNR - 17
-                self.instr_a.atten = attenuation + diff_OSNR
+                self.instr_a2.atten = attenuation2 + diff_OSNR
                 time.sleep(delay)
                 for k in range(301):
                     self.instr_uxr.single()
