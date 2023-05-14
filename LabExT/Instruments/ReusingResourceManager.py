@@ -58,7 +58,7 @@ class ReusingResourceManager(visa.ResourceManager):
         Before actually opening the resource, check if we already have it available and reuse it if necessary.
         """
         with self._lrm_tlock:
-            if resource_name in self._lrm_opened_resources:
+            if resource_name in self._lrm_opened_resources and resource_name != "TCPIP0::169.254.187.212::INSTR":
                 # resource is already open, increase counter and return obj
                 log = self._lrm_opened_resources[resource_name]
                 log.counter += 1

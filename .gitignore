@@ -216,6 +216,7 @@ pip-selfcheck.json
 #
 # LabExT custom
 #
+debug.log*
 
 # ignore all experiment/measurement settings files
 *_settings.json

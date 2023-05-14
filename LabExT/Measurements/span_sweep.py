@@ -51,7 +51,7 @@ class span_sweep(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Attenuator 1', 'Attenuator 2', 'UXR']
+        return ['UXR']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -69,25 +69,25 @@ class span_sweep(Measurement):
 
         # get instrument pointers
         # self.instr_ps = instruments['Power Supply']
-        self.instr_a3db = instruments['Attenuator 1']
-        self.instr_a6db = instruments['Attenuator 2']
+        # self.instr_a3db = instruments['Attenuator 1']
+        # self.instr_a6db = instruments['Attenuator 2']
         self.instr_uxr = instruments['UXR']
  
         # open connection to power supply
         # self.instr_ps.open()
-        self.instr_a3db.open()
-        self.instr_a6db.open()
+        # self.instr_a3db.open()
+        # self.instr_a6db.open()
         self.instr_uxr.open()
 
         # clear errors
         # self.instr_ps.clear()
-        self.instr_a3db.clear()
-        self.instr_a6db.clear()
-        self.instr_uxr.clear()
+        # self.instr_a3db.clear()
+        # self.instr_a6db.clear()
+        # self.instr_uxr.clear()
 
         # self.instr_ps.set_voltage(voltage = voltage, current = 0)
-        self.instr_a3db.atten = attenuation3db
-        self.instr_a6db.atten = attenuation6db
+        # self.instr_a3db.atten = attenuation3db
+        # self.instr_a6db.atten = attenuation6db
         time.sleep(delay)
         points_inner = np.arange(OSNR_start_value, OSNR_end_value + OSNR_step, OSNR_step)
         points_outer = np.arange(LP_start_value, LP_end_value - LP_step, -LP_step)
@@ -95,9 +95,9 @@ class span_sweep(Measurement):
         pn = 'C:\\Users\\Prankush\\Desktop\\Prankush\\auto_test'
         channels = [1, 2, 3, 4]
         for LP in points_outer:
-            diff_LP = 8 - LP
-            self.instr_a6db.atten = attenuation6db + diff_LP
-            time.sleep(delay)
+            # diff_LP = 8 - LP
+            # self.instr_a6db.atten = attenuation6db + diff_LP
+            # time.sleep(delay)
             ##################################
             # power = powermeter
             # diff = power - LP
@@ -111,22 +111,22 @@ class span_sweep(Measurement):
             #     continue
             ##################################
             for OSNR in points_inner:
-                diff_OSNR = OSNR - 17
-                self.instr_a3db.atten = attenuation3db + diff_OSNR
-                time.sleep(delay)
+                # diff_OSNR = OSNR - 17
+                # self.instr_a3db.atten = attenuation3db + diff_OSNR
+                # time.sleep(delay)
 
-                pythoncom.CoInitialize()
-                outlook = win32.Dispatch('outlook.application')
-                mail = outlook.CreateItem(0)
-                mail.To = 'pagarwal306@gatech.edu'
-                mail.Subject = 'Singlemode Status'
-                mail.Body = 'LP=' + str(LP) + '_OSNR=' + str(OSNR)
-                mail.Send()
+                # pythoncom.CoInitialize()
+                # outlook = win32.Dispatch('outlook.application')
+                # mail = outlook.CreateItem(0)
+                # mail.To = 'pagarwal306@gatech.edu'
+                # mail.Subject = 'Singlemode Status'
+                # mail.Body = 'LP=' + str(LP) + '_OSNR=' + str(OSNR)
+                # mail.Send()
 
                 for k in range(num_waveform):
                     self.instr_uxr.single()
                     for i in channels:
-                        data = self.instr_uxr.get_waveform(channel = str(i))
+                        data = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(i))
                         if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR)):
                             os.makedirs(pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR))
                         fn = pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR) + '\\' + 'file_' + str(k) + 'channel_' + str(i)
@@ -134,8 +134,8 @@ class span_sweep(Measurement):
 
         # close connection
         # self.instr_ps.close()
-        self.instr_a3db.close()
-        self.instr_a6db.close()
-        self.instr_uxr.close()
+        # self.instr_a3db.close()
+        # self.instr_a6db.close()
+        # self.instr_uxr.close()
 
 

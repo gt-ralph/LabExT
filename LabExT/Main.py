@@ -76,8 +76,9 @@ def main():
     logger.addHandler(sh)
 
     # create log file rotating handler for debugs and above
-    log_file_path = get_configuration_file_path('debug.log')
-    rfh = RotatingFileHandler(log_file_path, mode='a', maxBytes=100e6, backupCount=5)
+    # log_file_path = get_configuration_file_path('debug.log')
+    log_file_path = "debug.log"
+    rfh = RotatingFileHandler(log_file_path, mode='w', maxBytes=100e6, backupCount=5)
     rfh.setLevel(str.upper(args.log_file_level))  # defaults to DEBUG
     rfh.setFormatter(clf)
     logger.addHandler(rfh)
