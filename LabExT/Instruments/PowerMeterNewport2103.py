@@ -14,6 +14,7 @@ import threading
 class PowerMeterNewport2103(Instrument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
         self.lj = None
         self.lj_port = self._kwargs.get("lj_port", None)
         #Wavelength given in nanometers

@@ -232,12 +232,12 @@ class IIP3_sweep(Measurement):
                 inner_current_result_list.append(self.instr_ps2.get_current())
                 inner_voltage_result_list.append(self.instr_ps2.get_voltage())
                 trace_data.append(self.instr_sa.get_trace().tolist())
-                optical_power_result_list.append(self.instr_pm1.fetch_power())
                 if(rf_state == 1):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
-
+                time.sleep(ESA_delay)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
+                optical_power_result_list.append(self.instr_pm1.fetch_power())
                 
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
