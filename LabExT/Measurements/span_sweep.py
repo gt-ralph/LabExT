@@ -43,6 +43,8 @@ class span_sweep(Measurement):
             #attenuation
             'attenuation value 3db': MeasParamInt(value = 0, unit = 'dBm'),
             'attenuation value 6db': MeasParamInt(value = 0, unit = 'dBm'),
+            'wavelength 3db': MeasParamFloat(value = .000001550, unit='m'),
+            'wavelength 6db': MeasParamFloat(value=.000001550, unit = 'm'),
             
             'delay':MeasParamInt(value = 1, unit='s'), 
 
@@ -51,7 +53,7 @@ class span_sweep(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['UXR']
+        return ['Power Supply', 'Attenuator 1', 'Attenuator 2', 'UXR']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -64,19 +66,21 @@ class span_sweep(Measurement):
         # voltage = parameters.get('power supply voltage').value
         attenuation3db = parameters.get('attenuation value 3db').value
         attenuation6db = parameters.get('attenuation value 6db').value
+        wavelength3db = parameters.get('wavelength 3db').value
+        wavelength6db = parameters.get('wavelength 6db').value
         delay = parameters.get('delay').value
         num_waveform = parameters.get('number of waveforms').value
 
         # get instrument pointers
         # self.instr_ps = instruments['Power Supply']
-        # self.instr_a3db = instruments['Attenuator 1']
-        # self.instr_a6db = instruments['Attenuator 2']
+        self.instr_a3db = instruments['Attenuator 1']
+        self.instr_a6db = instruments['Attenuator 2']
         self.instr_uxr = instruments['UXR']
  
         # open connection to power supply
         # self.instr_ps.open()
-        # self.instr_a3db.open()
-        # self.instr_a6db.open()
+        self.instr_a3db.open()
+        self.instr_a6db.open()
         self.instr_uxr.open()
 
         # clear errors
@@ -85,19 +89,21 @@ class span_sweep(Measurement):
         # self.instr_a6db.clear()
         # self.instr_uxr.clear()
 
-        # self.instr_ps.set_voltage(voltage = voltage, current = 0)
-        # self.instr_a3db.atten = attenuation3db
-        # self.instr_a6db.atten = attenuation6db
+        # self.instr_ps.set_voltage(voltage = voltage, current = 1)
+        self.instr_a3db.atten = attenuation3db
+        self.instr_a6db.atten = attenuation6db
+        self.instr_a3db.wavelength = wavelength3db
+        self.instr_a6db.wavelength = wavelength6db
         time.sleep(delay)
         points_inner = np.arange(OSNR_start_value, OSNR_end_value + OSNR_step, OSNR_step)
         points_outer = np.arange(LP_start_value, LP_end_value - LP_step, -LP_step)
 
-        pn = 'C:\\Users\\Prankush\\Desktop\\Prankush\\auto_test'
+        pn = 'C:\\Users\\Prankush\\Desktop\\Prankush\\auto_test1'
         channels = [1, 2, 3, 4]
         for LP in points_outer:
-            # diff_LP = 8 - LP
-            # self.instr_a6db.atten = attenuation6db + diff_LP
-            # time.sleep(delay)
+            diff_LP = 8 - LP
+            self.instr_a6db.atten = attenuation6db + diff_LP
+            time.sleep(delay)
             ##################################
             # power = powermeter
             # diff = power - LP
@@ -111,31 +117,31 @@ class span_sweep(Measurement):
             #     continue
             ##################################
             for OSNR in points_inner:
-                # diff_OSNR = OSNR - 17
-                # self.instr_a3db.atten = attenuation3db + diff_OSNR
-                # time.sleep(delay)
+                diff_OSNR = OSNR - 17
+                self.instr_a3db.atten = attenuation3db + diff_OSNR
+                time.sleep(delay)
 
-                # pythoncom.CoInitialize()
-                # outlook = win32.Dispatch('outlook.application')
-                # mail = outlook.CreateItem(0)
-                # mail.To = 'pagarwal306@gatech.edu'
-                # mail.Subject = 'Singlemode Status'
-                # mail.Body = 'LP=' + str(LP) + '_OSNR=' + str(OSNR)
-                # mail.Send()
+                pythoncom.CoInitialize()
+                outlook = win32.Dispatch('outlook.application')
+                mail = outlook.CreateItem(0)
+                mail.To = 'pagarwal306@gatech.edu'
+                mail.Subject = 'Singlemode Status'
+                mail.Body = 'LP =' + str(LP) + ' OSNR =' + str(OSNR)
+                mail.Send()
 
                 for k in range(num_waveform):
                     self.instr_uxr.single()
                     for i in channels:
                         data = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(i))
-                        if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR)):
-                            os.makedirs(pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR))
-                        fn = pn + '\\' + 'LP_' + str(LP) + 'OSNR' + str(OSNR) + '\\' + 'file_' + str(k) + 'channel_' + str(i)
+                        if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR)):
+                            os.makedirs(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR))
+                        fn = pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR) + '\\' + 'file_' + str(k) + '_channel_' + str(i)
                         np.save(fn, data)
 
         # close connection
         # self.instr_ps.close()
-        # self.instr_a3db.close()
-        # self.instr_a6db.close()
+        self.instr_a3db.close()
+        self.instr_a6db.close()
         # self.instr_uxr.close()
 
 

@@ -50,7 +50,8 @@ class OptAttenHP8156A(Instrument):
 
         self.networked_instrument_properties.extend([
             'atten',
-            'output'          
+            'output',
+            'wavelength',          
         ])
 
     def open(self):
@@ -97,6 +98,20 @@ class OptAttenHP8156A(Instrument):
         :return: none
         """
         self.command(f"INPut:Attenuation {value}")
+
+    @property
+    def wavelength(self):
+        """
+        returns wavelength in meters
+        """
+        return float(self.request(f'INPut:WAVelength?'))
+    
+    @wavelength.setter
+    def wavelength(self, value):
+        """
+        sets wavelength in meters
+        """
+        self.command(f"INPut:WAVelength {float(value)}")
 
     @property
     def output(self):
