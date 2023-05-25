@@ -107,7 +107,10 @@ class Instrument(object):
             **kwargs: kwargs are saved in the `self._kwargs` property and can be accessed there by any sub-class
         """
         self.logger = logging.getLogger()
-
+        # print("This is kwargs:")
+        # print(kwargs)
+        # print(f'This is the visa address: {visa_address}')
+        # print(f'This is the channel: {channel}')
         self._inst = None  # type: pyvisa.resources.Resource
         self._address = visa_address
         self._category = "Laboratory Instrument"

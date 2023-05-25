@@ -10,6 +10,9 @@ import threading
 import time
 
 import numpy as np
+import pythoncom
+import win32com.client as win32
+pythoncom.CoInitialize()
 
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 
@@ -129,33 +132,7 @@ class SupplyAgilentE3631A(Instrument):
         self.command("OUTPUT:STATE OFF")
         super().close()
 
-    #
-    # sets voltage on the port specified by the channel
-    #
 
-    # def set_voltage(self, voltage = 0, current=None ):
-    #     """
-    #     Sets the voltage of the specified channel
-    #     Note the APPL command technically permits no current
-    #     as an input argument (it'll use the single number as a voltage)
-    #     Valid channels: P6V, P25V, N25V
-    #     :return: none
-    #     """
-    #     #if user didn't specify the current limit, set it to the default
-    #     if current == None:
-    #         current = self._current_lim
-        
-    #     #if one of the positive channels
-    #     if ((self.channel == 0 or self.channel == 1) and (voltage <= self._voltage_lim and voltage >= 0)):
-    #         self.command(f'APPL {self.chanstring}, {voltage}, {current}')
-    #         return True
-    #     #if the negative channel
-    #     elif ((self.channel == 2) and (voltage >= self._voltage_lim and voltage <= 0)):
-    #         self.command(f'APPL {self.chanstring}, {voltage}, {current}')
-    #         return True
-    #     #if ya done goofed
-    #     else:
-    #         raise InstrumentException(f'voltage exceeded safe limit. It was: {voltage}')
 
  
 #
@@ -210,6 +187,14 @@ class SupplyAgilentE3631A(Instrument):
             return True
         #if ya done goofed
         else:
+            pythoncom.CoInitialize()
+            outlook = win32.Dispatch('outlook.application')
+            mail = outlook.CreateItem(0)
+            mail.To = 'ckaylor30@gatech.edu'
+            mail.Subject = 'Job Terminated Early eek voltage unsafe'
+            mail.Body = f'Figure out what\'s wrong :(. Also voltage was was: {voltage} '
+
+            mail.Send()
             raise InstrumentException(f'voltage exceeded safe limit. It was: {voltage}')
         
 

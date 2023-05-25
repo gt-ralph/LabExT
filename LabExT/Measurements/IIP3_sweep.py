@@ -97,7 +97,7 @@ class IIP3_sweep(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4']
+        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4', 'Power Meter 3']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -128,6 +128,7 @@ class IIP3_sweep(Measurement):
         self.instr_sg1 = instruments['Signal Generator 1']
         self.instr_sg2 = instruments['Signal Generator 2']
         self.instr_ps4 = instruments['Power Supply 4']
+        self.instr_pm3 = instruments['Power Meter 3']
  
 
 
@@ -141,6 +142,7 @@ class IIP3_sweep(Measurement):
         self.instr_sg1.open()
         self.instr_sg2.open()
         self.instr_ps4.open()
+        self.instr_pm3.open()
 
 
         # clear errors
@@ -153,30 +155,14 @@ class IIP3_sweep(Measurement):
         self.instr_sg1.clear()
         self.instr_sg2.clear()
         self.instr_ps4.clear()
+        self.instr_pm3.clear()
 
         self.instr_sg1.set_power(power=pow)
-        self.instr_sg1.set_freq(freq=fcen+0.0002)
+        self.instr_sg1.set_freq(freq=fcen+0.0001)
         self.instr_sg1.set_output(rf_state)
         self.instr_sg2.set_power(power=pow)
         self.instr_sg2.set_freq(freq=fcen)
         self.instr_sg2.set_output(rf_state)
-
-        # # Ask minimal possible wavelength
-        # min_lambda = float(self.instr_laser.min_lambda)
-
-        # # Ask maximal possible wavelength
-        # max_lambda = float(self.instr_laser.max_lambda)
-
-        # # change the minimal & maximal wavelengths if necessary
-        # if start_lambda < min_lambda or start_lambda > max_lambda:
-        #     start_lambda = min_lambda
-        #     parameters['wavelength start'].value = start_lambda
-        #     self.logger.warning('start_lambda has been changed to smallest possible value ' + str(min_lambda))
-
-        # if end_lambda > max_lambda or end_lambda < min_lambda:
-        #     end_lambda = max_lambda
-        #     parameters['wavelength stop'].value = end_lambda
-        #     self.logger.warning('end_lambda has been changed to greatest possible value ' + str(max_lambda))
 
         # write the measurement parameters into the measurement settings
         for pname, pparam in parameters.items():
@@ -186,23 +172,9 @@ class IIP3_sweep(Measurement):
         points_outer = np.arange(outer_sweep_start_volt,outer_sweep_stop_volt+outer_sweep_step_volt,outer_sweep_step_volt)
         number_of_points = points_inner.size*points_outer.size
 
-
-        # PM settings
-        # self.instr_pm.wavelength = center_wavelength
-        # self.instr_pm.range = pm_range
-        # self.instr_pm.unit = 'dBm'
-        # max_avg_time = abs(start_lambda - end_lambda) / (sweep_speed * number_of_points)
-        # self.instr_pm.averagetime = max_avg_time / 2
-        # # note: this check makes sense here, since the instrument might quietly set avg. time to something larger
-        # # than desired
-        # if self.instr_pm.averagetime > max_avg_time:
-        #     raise RuntimeError("Power meter minimum average time is longer than one WL step time!")
-        # self.instr_pm.logging_setup(n_measurement_points=number_of_points,
-        #                             triggered=True,
-        #                             trigger_each_meas_separately=True)
-        #Reverse bias for modulator
-        self.instr_ps3.set_voltage(voltage=extra_voltage_1, current = 1)
-        self.instr_ps4.set_voltage(voltage=extra_voltage_2, current = 1)
+        # Allow user to set a voltage to their 
+        self.instr_ps3.voltage=extra_voltage_1
+        self.instr_ps4.voltage=extra_voltage_2
         # inform user
         self.logger.info(f"Sweeping over {number_of_points:d} samples "
                          f"at {ESA_delay:e}s sampling period.")
@@ -216,6 +188,7 @@ class IIP3_sweep(Measurement):
         inner_voltage_result_list = []
         optical_power_result_list = []
         keithley_current_result_list = []
+        final_pd_keithley_current_result_list = []
 
         # STARTET DIE MOTOREN!
         # with self.instr_ps:
@@ -224,20 +197,21 @@ class IIP3_sweep(Measurement):
         for volt_outer in points_outer:
             for volt_inner in points_inner:
                 #Use the MeasParamString's value (rather than the stupid tostring that adds a random colon)
-                self.instr_ps2.set_voltage(voltage=volt_inner,current = 1)
-                self.instr_ps1.set_voltage(voltage=volt_outer,current = 1)
+                self.instr_ps2.voltage = volt_inner
+                self.instr_ps1.voltage = volt_outer
                 time.sleep(ESA_delay)
-                outer_current_result_list.append(self.instr_ps1.get_current())
-                outer_voltage_result_list.append(self.instr_ps1.get_voltage())
-                inner_current_result_list.append(self.instr_ps2.get_current())
-                inner_voltage_result_list.append(self.instr_ps2.get_voltage())
+                outer_current_result_list.append(self.instr_ps1.current)
+                outer_voltage_result_list.append(self.instr_ps1.voltage)
+                inner_current_result_list.append(self.instr_ps2.current)
+                inner_voltage_result_list.append(self.instr_ps2.voltage)
                 trace_data.append(self.instr_sa.get_trace().tolist())
                 if(rf_state == 1):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
-                time.sleep(ESA_delay)
+                time.sleep(ESA_delay/2)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
                 optical_power_result_list.append(self.instr_pm1.fetch_power())
+                final_pd_keithley_current_result_list.append(self.instr_pm3.fetch_power())
                 
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
@@ -247,26 +221,6 @@ class IIP3_sweep(Measurement):
 
         mdic = {"data": np_trace_data}
         io.savemat("C:\\Users\\ckaylor30\\OneDrive - Georgia Institute of Technology\\laboratory_measurements\\IIP3_sweep_"+time.strftime("%Y_%m_%d_%H_%M_%S")+".mat", mdic)
-            #Will  need to read in all the stuff here
-
-        
-
-            # wait for pm finished logging, needs to be time-out checked since hw triggering of PM could silently fail
-            # time_start_wait_pms = time.time()
-            # while self.instr_pm.logging_busy():
-            #     if time.time() - time_start_wait_pms > 3.0:
-            #         raise RuntimeError("PM did not finish sweep in 3 seconds after laser sweep done.")
-            #     time.sleep(0.1)
-
-        # read out data
-        # self.logger.info("Downloading optical power data from power meter.")
-        # power_data = self.instr_pm.logging_get_data()
-        # self.logger.info("Downloading wavelength data from laser.")
-        # used_n_samples = self.instr_laser.sweep_wl_get_n_points()
-        # lambda_data = self.instr_laser.sweep_wl_get_data(N_samples=used_n_samples)
-
-        # Reset PM for manual Measurements
-        # self.instr_pm.range = 'auto'
 
         # convert numpy float32/float64 to python float
         # data['values']['transmission [dBm]'] = power_data.tolist()
@@ -277,6 +231,7 @@ class IIP3_sweep(Measurement):
         data['values']['voltage_inner'] = inner_voltage_result_list
         data['values']['optical_power_result_list'] = optical_power_result_list
         data['values']['keithley_current_result_list'] = keithley_current_result_list
+        data['values']['final_pd_keithley_current_result_list'] = final_pd_keithley_current_result_list
         # close connection
         self.instr_ps1.close()
         self.instr_ps2.close()
@@ -289,9 +244,15 @@ class IIP3_sweep(Measurement):
         self.instr_sg2.close()
         self.instr_ps4.close()
 
+        #Gotta coinitialize right before emailing
+        #do not ask why because I have no clue
         pythoncom.CoInitialize()
+
+        #Email object for sending emails
         outlook = win32.Dispatch('outlook.application')
         mail = outlook.CreateItem(0)
+
+        #add in your own email
         mail.To = 'ckaylor30@gatech.edu'
         mail.Subject = 'Job done'
         mail.Body = 'Get your data :)'

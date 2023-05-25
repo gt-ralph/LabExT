@@ -16,7 +16,7 @@ from datetime import datetime
 from scipy import io
 
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
-class IIP3_sweep_pid(Measurement):
+class IIP3_sweep_double_pid(Measurement):
     """
     ## IIp3_sweep
 
@@ -55,68 +55,18 @@ class IIP3_sweep_pid(Measurement):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)  # calling parent constructor
 
-        self.name = 'IIP3_sweep'
-        self.settings_path = 'IIP3_sweep_settings.json'
+        self.name = 'IIP3_sweep_double_pid'
+        self.settings_path = 'IIP3_sweepdouble_pid_settings.json'
         self.instr_ps1 = None
         self.voltage_limit = 1.6
         self.current_limit = 0.08
 
-    #This algorithm discards the control systems paradigm and simply does a 
-    #gradient descent  instead
-    def return_to_min(self, controlled_power_supply, process_measuring_device, setpoint):
-        test_step_size = 0.03 #step size to test the slope
-        sample_time =0.2
-        iteration = 0 
-        integral = 0
-        error = 1
-        last_error = 0.5
-        last_last_error = 1
-        slope_sign = 0
-        kp = 24000
-        #ignore changes in direction for a few iterations
-        mask_num = 0
-        mask = 0
+    def one_pid_step(self, process_value, controlled_power_supply, setpoint, sample_time,kp,last_error, last_last_error, iteration, min_ever, slope_sign,plant_voltage):
 
-
-        #take a couple steps in a direction to assess what side of the quadratic we're on
-        # controlled_power_supply.voltage = controlled_power_supply.voltage - 0.01
-        # time.sleep(sample_time)
-        initial_plant_voltage = controlled_power_supply.voltage
-        initial_process_value = process_measuring_device.fetch_power()
-
-
-        # first_step = initial_plant_voltage - test_step_size
-        # controlled_power_supply.voltage = first_step
-        # time.sleep(sample_time)
-        # first_step_process_value = process_measuring_device.fetch_power()
-
-        # second_step = initial_plant_voltage - 2*test_step_size
-        # controlled_power_supply.voltage = second_step
-        # time.sleep(sample_time)
-        # second_step_process_value = process_measuring_device.fetch_power()
-        slope_sign = -1
-        min_ever = 1
-
-
-        # if(first_step_process_value > initial_process_value and second_step_process_value > first_step_process_value):
-        #     slope_sign = -1
-        # elif(first_step_process_value < initial_process_value and second_step_process_value < first_step_process_value):
-        #     slope_sign = 1
-        # else:
-        #     print('test didn\'t produce consistent results. Maybe reducing step size will help?')
-        #     print('setting slope_sign to 1 so at least something happens')
-        #     slope_sign = 1
-        controlled_power_supply.voltage =initial_plant_voltage
-        plant_voltage = initial_plant_voltage
-
-        while abs(kp) > 400 and (abs(last_error - last_last_error) > 3e-12): # 60 nano amps 
-
-            # Calculate the error and integral term
-            process_value = process_measuring_device.fetch_power()
-            print(f"PD current = {process_value}, MZM Bias = {plant_voltage}")
+            # print(f"PD current = {process_value}, MZM Bias = {plant_voltage}")
             if(process_value < min_ever):
                 min_ever = process_value
-                print(f"Found new minimum, {min_ever}")
+                # print(f"Found new minimum, {min_ever}")
             
             error = setpoint - process_value
             # print("error is:")
@@ -126,7 +76,7 @@ class IIP3_sweep_pid(Measurement):
             # Calculate the control output
             control_output = kp*error
 
-            print(f"error = {error}, control_output = {control_output}")
+            # print(f"error = {error}, control_output = {control_output}")
             
             # Update the parameter and process variable value based on the control output
             #Note the slope sign comes from the test above (photodiode poweer is quadratic not linear
@@ -134,22 +84,17 @@ class IIP3_sweep_pid(Measurement):
             plant_voltage= plant_voltage + slope_sign*control_output
             controlled_power_supply.voltage = plant_voltage
             time.sleep(sample_time)
-            iteration += 1
-            # print(f"iteration number = {iteration}")
-            # print("\n")
 
-            if(abs(last_error) > abs(last_last_error) and abs(error) > abs(last_error) and mask > mask_num and abs(abs(error)-abs(last_last_error)) > 5e-11):
+            if(abs(last_error) > abs(last_last_error) and abs(error) > abs(last_error) and abs(abs(error)-abs(last_last_error)) > 5e-11):
                 kp = kp/2
-                print("kp is the following:")
-                print(kp)
+                # print("kp is the following:")
+                # print(kp)
                 slope_sign = -slope_sign
-                print('reducing kp')
+                # print('reducing kp')
                 last_last_error = 1
                 last_error = 0.5
-                mask = 0
-            
-            mask = mask + 1
-            iter_limit = 150
+
+            iter_limit = 600
             if(iteration > iter_limit and abs(min_ever - process_value) > 5e-9 ):
                 pythoncom.CoInitialize()
                 outlook = win32.Dispatch('outlook.application')
@@ -165,93 +110,58 @@ class IIP3_sweep_pid(Measurement):
             # Set the last error for the next iteration
             last_last_error = last_error
             last_error = error
-        return plant_voltage
+            return last_error, last_last_error, min_ever, slope_sign,plant_voltage
 
-
-    #Performs PID control given a voltage to control
-    #returns the history of currents we're measuring
-    #and some other variables
-    def PID(self, controlled_power_supply, process_measuring_device, setpoint):
-        kp = 8000  # Proportional gain
-        ki = 100#.2  # Integral gain
-        kd = 10#.1  # Derivative gain
-        test_step_size = 0.03 #step size to test the slope
+    #This algorithm discards the control systems paradigm and simply does a 
+    #gradient descent  instead
+    def return_to_min_2(self, controlled_power_supply_1, process_measuring_device_1,controlled_power_supply_2, process_measuring_device_2, setpoint):
         sample_time =0.2
         iteration = 0 
         integral = 0
-        error = 1
-        last_error = 0
-        slope_sign = 0
+
+        last_error_1 = 0.5
+        last_last_error_1 = 1
+        slope_sign_1 = -1
+        kp_1 = 24000
+        min_ever_1 = 1
+
+
+        last_error_2 = 0.5
+        last_last_error_2 = 1
+        slope_sign_2 = -1
+        kp_2 = 0.05
+        min_ever_2 = 1
+
+        error_list_1 = []
+        error_list_2 = []
 
         #take a couple steps in a direction to assess what side of the quadratic we're on
-        controlled_power_supply.voltage = controlled_power_supply.voltage - 0.01
-        time.sleep(sample_time)
-        initial_plant_voltage = controlled_power_supply.voltage
-        initial_process_value = process_measuring_device.fetch_power()
-        first_step = initial_plant_voltage - test_step_size
-        controlled_power_supply.voltage = first_step
-        time.sleep(sample_time)
-        first_step_process_value = process_measuring_device.fetch_power()
-
-        second_step = initial_plant_voltage - 2*test_step_size
-        controlled_power_supply.voltage = second_step
-        time.sleep(sample_time)
-        second_step_process_value = process_measuring_device.fetch_power()
+        # controlled_power_supply.voltage = controlled_power_supply.voltage - 0.01
+        # time.sleep(sample_time)
+        initial_plant_voltage_1 = controlled_power_supply_1.voltage
+        initial_process_value_1 = process_measuring_device_1.fetch_power()
+        initial_plant_voltage_2 = controlled_power_supply_2.voltage
+        initial_process_value_2 = process_measuring_device_2.fetch_power()
 
 
-        if(first_step_process_value > initial_process_value and second_step_process_value > first_step_process_value):
-            slope_sign = -1
-        elif(first_step_process_value < initial_process_value and second_step_process_value < first_step_process_value):
-            slope_sign = 1
-        else:
-            print('test didn\'t produce consistent results. Maybe reducing step size will help?')
-            print('setting slope_sign to 1 so at least something happens')
-            slope_sign = 1
-        controlled_power_supply.voltage =initial_plant_voltage - test_step_size
-        
+        controlled_power_supply_1.voltage =initial_plant_voltage_1
+        controlled_power_supply_2.voltage =initial_plant_voltage_2
+        plant_voltage_1 = initial_plant_voltage_1
+        plant_voltage_2 = initial_plant_voltage_2
 
-        while abs(error) > 7e-8 : # 60 nano amps 
+        while abs(kp_1) > 400 and abs(last_error_1 - last_last_error_1) > 3e-12 and abs(kp_2) > 0.003 and (abs(last_error_2 - last_last_error_2) > 3e-12): # 60 nano amps 
+            iteration = iteration + 1
+            process_power_1 = process_measuring_device_1.fetch_power()
+            last_error_1, last_last_error_1, min_ever_1, slope_sign_1, plant_voltage_1 = self.one_pid_step(process_power_1, controlled_power_supply_1, setpoint, sample_time, kp_1, last_error_1, last_last_error_1, iteration, min_ever_1, slope_sign_1,plant_voltage_1)
+            error_list_1.append(last_error_1)
+            fetched_power = process_measuring_device_2.fetch_power()
+            process_power_2 = 10**(fetched_power/20) #un-log the power so we can linearly control
+            print(f'un-logged power is the following: {process_power_2}')
+            print(f'logged power is the following: {fetched_power}')
+            last_error_2, last_last_error_2, min_ever_2, slope_sign_2, plant_voltage_2 = self.one_pid_step(process_power_2, controlled_power_supply_2, setpoint, sample_time, kp_2, last_error_2, last_last_error_2, iteration, min_ever_2, slope_sign_2,plant_voltage_2)
+            error_list_2.append(last_error_2)
+        return plant_voltage_1, plant_voltage_2, error_list_1, error_list_1
 
-            # Calculate the error and integral term
-            process_value = process_measuring_device.fetch_power()
-            plant_voltage = controlled_power_supply.voltage
-            # print(f"PD current = {process_value}, MZM Bias = {plant_voltage}")
-            
-            error = setpoint - process_value
-            # print("error is:")
-            # print(error)
-            # print("")
-
-            integral += error * sample_time
-            # print("integral is:")
-            # print(integral)
-            # print("")
-
-            # Calculate the derivative term
-            derivative = (error - last_error) / sample_time
-            # print("derivative is:")
-            # print(derivative)
-            # print("")
-            # Calculate the control output
-            control_output = kp * error + ki * integral + kd * derivative
-
-            print(f"error = {error}, control_output = {control_output}")
-            
-            # Update the parameter and process variable value based on the control output
-            #Note the slope sign comes from the test above (photodiode poweer is quadratic not linear
-            # and we are actively moving towards the bit where the slope suddenly changes direction)
-            plant_voltage= plant_voltage + slope_sign*control_output
-            controlled_power_supply.voltage = plant_voltage
-            time.sleep(sample_time)
-            iteration += 1
-            # print(f"iteration number = {iteration}")
-            # print("\n")
-            iter_limit = 50
-            if(iteration > iter_limit):
-                raise InstrumentException(f'reached {iteration} iterations, terminating')
-            # Set the last error for the next iteration
-            last_error = error
-        return plant_voltage
 
     @staticmethod
     def get_default_parameter():
@@ -316,7 +226,6 @@ class IIP3_sweep_pid(Measurement):
         self.instr_sg1 = instruments['Signal Generator 1']
         self.instr_sg2 = instruments['Signal Generator 2']
         self.instr_ps4 = instruments['Power Supply 4']
-        
  
 
 
@@ -388,10 +297,10 @@ class IIP3_sweep_pid(Measurement):
                 if(rf_state == 1):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
-                plant_voltage = self.return_to_min(self.instr_ps4, self.instr_pm2, 0)
-                print("After PID the plant voltage is:")
-                print(plant_voltage)
-                plant_voltage_result_list.append(plant_voltage)
+                plant_voltage_1, plant_voltage_2, error_list_1, error_list_2 = self.return_to_min_2(self.instr_ps4, self.instr_pm2,self.instr_ps3, self.instr_pm1, 0)
+                print("After PID the plant voltage 1 is:")
+                print(plant_voltage_1)
+                plant_voltage_result_list.append(plant_voltage_1)
                 outer_current_result_list.append(self.instr_ps1.current)
                 outer_voltage_result_list.append(self.instr_ps1.voltage)
                 inner_current_result_list.append(self.instr_ps2.current)
