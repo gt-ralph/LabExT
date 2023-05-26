@@ -72,7 +72,7 @@ class IIP3_sweep_pid(Measurement):
         last_error = 0.5
         last_last_error = 1
         slope_sign = 0
-        kp = 24000
+        kp = 0.1
         #ignore changes in direction for a few iterations
         mask_num = 0
         mask = 0
@@ -109,10 +109,11 @@ class IIP3_sweep_pid(Measurement):
         controlled_power_supply.voltage =initial_plant_voltage
         plant_voltage = initial_plant_voltage
 
-        while abs(kp) > 400 and (abs(last_error - last_last_error) > 3e-12): # 60 nano amps 
+        while abs(kp) > 0.01 and (abs(last_error - last_last_error) > 3e-12): # 60 nano amps 
 
             # Calculate the error and integral term
-            process_value = process_measuring_device.fetch_power()
+            #un-log the photodiode
+            process_value = 10**(process_measuring_device.fetch_power()/10)
             print(f"PD current = {process_value}, MZM Bias = {plant_voltage}")
             if(process_value < min_ever):
                 min_ever = process_value
@@ -132,6 +133,18 @@ class IIP3_sweep_pid(Measurement):
             #Note the slope sign comes from the test above (photodiode poweer is quadratic not linear
             # and we are actively moving towards the bit where the slope suddenly changes direction)
             plant_voltage= plant_voltage + slope_sign*control_output
+
+            if(plant_voltage > 0.75):
+                pythoncom.CoInitialize()
+                outlook = win32.Dispatch('outlook.application')
+                mail = outlook.CreateItem(0)
+                mail.To = 'ckaylor30@gatech.edu'
+                mail.Subject = 'Job Terminated Early eek'
+                mail.Body = f'Figure out what\'s wrong :(. Also plant voltage was: {plant_voltage} '
+
+                mail.Send()
+                raise InstrumentException(f'Exceeded allowed plant voltage, it was {plant_voltage}')
+
             controlled_power_supply.voltage = plant_voltage
             time.sleep(sample_time)
             iteration += 1
@@ -241,6 +254,8 @@ class IIP3_sweep_pid(Measurement):
             #Note the slope sign comes from the test above (photodiode poweer is quadratic not linear
             # and we are actively moving towards the bit where the slope suddenly changes direction)
             plant_voltage= plant_voltage + slope_sign*control_output
+            if(plant_voltage > 0.6):
+                raise InstrumentException(f'Exceeded allowed plant voltage, it was {plant_voltage}')
             controlled_power_supply.voltage = plant_voltage
             time.sleep(sample_time)
             iteration += 1
@@ -287,7 +302,7 @@ class IIP3_sweep_pid(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4']
+        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4', 'Power Meter 3']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -316,6 +331,7 @@ class IIP3_sweep_pid(Measurement):
         self.instr_sg1 = instruments['Signal Generator 1']
         self.instr_sg2 = instruments['Signal Generator 2']
         self.instr_ps4 = instruments['Power Supply 4']
+        self.instr_pm3 = instruments['Power Meter 3']
         
  
 
@@ -330,6 +346,7 @@ class IIP3_sweep_pid(Measurement):
         self.instr_sg1.open()
         self.instr_sg2.open()
         self.instr_ps4.open()
+        self.instr_pm3.open()
 
 
         # clear errors
@@ -342,6 +359,7 @@ class IIP3_sweep_pid(Measurement):
         self.instr_sg1.clear()
         self.instr_sg2.clear()
         self.instr_ps4.clear()
+        self.instr_pm3.clear()
 
         self.instr_sg1.set_power(power=pow)
         self.instr_sg1.set_freq(freq=fcen+0.0002)
@@ -376,6 +394,7 @@ class IIP3_sweep_pid(Measurement):
         optical_power_result_list = []
         keithley_current_result_list = []
         plant_voltage_result_list = []
+        final_pd_keithley_current_result_list = []
         # STARTET DIE MOTOREN!
         # with self.instr_ps:
         trace_data = []
@@ -388,7 +407,7 @@ class IIP3_sweep_pid(Measurement):
                 if(rf_state == 1):
                     self.instr_sg2.set_output(0)
                     self.instr_sg1.set_output(0)
-                plant_voltage = self.return_to_min(self.instr_ps4, self.instr_pm2, 0)
+                plant_voltage = self.return_to_min(self.instr_ps4, self.instr_pm1, 0)
                 print("After PID the plant voltage is:")
                 print(plant_voltage)
                 plant_voltage_result_list.append(plant_voltage)
@@ -398,6 +417,8 @@ class IIP3_sweep_pid(Measurement):
                 inner_voltage_result_list.append(self.instr_ps2.voltage)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
                 optical_power_result_list.append(self.instr_pm1.fetch_power())
+                final_pd_keithley_current_result_list.append(self.instr_pm3.fetch_power())
+ 
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
                     self.instr_sg1.set_output(1)
@@ -416,6 +437,7 @@ class IIP3_sweep_pid(Measurement):
         data['values']['voltage_inner'] = inner_voltage_result_list
         data['values']['optical_power_result_list'] = optical_power_result_list
         data['values']['keithley_current_result_list'] = keithley_current_result_list
+        data['values']['final_pd_keithley_current_result_list'] = final_pd_keithley_current_result_list
         # close connection
         self.instr_ps1.close()
         self.instr_ps2.close()
@@ -423,7 +445,7 @@ class IIP3_sweep_pid(Measurement):
         self.instr_pm1.close()
         self.instr_pm2.close()
         self.instr_ps3.close()
-
+        self.instr_pm3.close()
         self.instr_sg1.close()
         self.instr_sg2.close()
         self.instr_ps4.close()

@@ -102,8 +102,8 @@ class IIP3_sweep_double_pid(Measurement):
                 mail.To = 'ckaylor30@gatech.edu'
                 mail.Subject = 'Job Terminated Early eek'
                 mail.Body = f'Figure out what\'s wrong :(. Also process value was: {process_value} '
-
                 mail.Send()
+
                 raise InstrumentException(f'reached {iteration} iterations, terminating')
             elif(iteration > iter_limit):
                 return plant_voltage
@@ -197,7 +197,7 @@ class IIP3_sweep_double_pid(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4']
+        return ['Power Supply 1','Power Supply 2', 'Spectrum Analyzer', 'Power Meter 1', 'Power Meter 2','Power Supply 3', 'Signal Generator 1', 'Signal Generator 2', 'Power Supply 4','Power Meter 3']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -226,6 +226,7 @@ class IIP3_sweep_double_pid(Measurement):
         self.instr_sg1 = instruments['Signal Generator 1']
         self.instr_sg2 = instruments['Signal Generator 2']
         self.instr_ps4 = instruments['Power Supply 4']
+        self.instr_pm3 = instruments['Power Meter 3']
  
 
 
@@ -239,6 +240,7 @@ class IIP3_sweep_double_pid(Measurement):
         self.instr_sg1.open()
         self.instr_sg2.open()
         self.instr_ps4.open()
+        self.instr_pm3.open()
 
 
         # clear errors
@@ -251,6 +253,7 @@ class IIP3_sweep_double_pid(Measurement):
         self.instr_sg1.clear()
         self.instr_sg2.clear()
         self.instr_ps4.clear()
+        self.instr_pm3.clear()
 
         self.instr_sg1.set_power(power=pow)
         self.instr_sg1.set_freq(freq=fcen+0.0002)
@@ -285,6 +288,7 @@ class IIP3_sweep_double_pid(Measurement):
         optical_power_result_list = []
         keithley_current_result_list = []
         plant_voltage_result_list = []
+        final_pd_keithley_current_result_list = []
         # STARTET DIE MOTOREN!
         # with self.instr_ps:
         trace_data = []
@@ -307,6 +311,8 @@ class IIP3_sweep_double_pid(Measurement):
                 inner_voltage_result_list.append(self.instr_ps2.voltage)
                 keithley_current_result_list.append(self.instr_pm2.fetch_power())
                 optical_power_result_list.append(self.instr_pm1.fetch_power())
+                final_pd_keithley_current_result_list.append(self.instr_pm3.fetch_power())
+ 
                 if(rf_state == 1):
                     self.instr_sg2.set_output(1)
                     self.instr_sg1.set_output(1)
@@ -325,6 +331,7 @@ class IIP3_sweep_double_pid(Measurement):
         data['values']['voltage_inner'] = inner_voltage_result_list
         data['values']['optical_power_result_list'] = optical_power_result_list
         data['values']['keithley_current_result_list'] = keithley_current_result_list
+        data['values']['final_pd_keithley_current_result_list'] = final_pd_keithley_current_result_list
         # close connection
         self.instr_ps1.close()
         self.instr_ps2.close()

@@ -239,7 +239,7 @@ class IIP3_sweep(Measurement):
         self.instr_pm1.close()
         self.instr_pm2.close()
         self.instr_ps3.close()
-
+        self.instr_pm3.close()
         self.instr_sg1.close()
         self.instr_sg2.close()
         self.instr_ps4.close()
