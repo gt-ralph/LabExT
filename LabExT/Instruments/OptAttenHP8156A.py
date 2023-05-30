@@ -50,7 +50,8 @@ class OptAttenHP8156A(Instrument):
 
         self.networked_instrument_properties.extend([
             'atten',
-            'output'          
+            'output',
+            'wavelength',          
         ])
 
     def open(self):
@@ -99,6 +100,20 @@ class OptAttenHP8156A(Instrument):
         self.command(f"INPut:Attenuation {value}")
 
     @property
+    def wavelength(self):
+        """
+        returns wavelength in meters
+        """
+        return float(self.request(f'INPut:WAVelength?'))
+    
+    @wavelength.setter
+    def wavelength(self, value):
+        """
+        sets wavelength in meters
+        """
+        self.command(f"INPut:WAVelength {float(value)}")
+
+    @property
     def output(self):
         """
         Returns the outuput status of the instrument
@@ -114,7 +129,7 @@ class OptAttenHP8156A(Instrument):
         :input: 1 to turn it on, 0 to turn it off (AND NOTHING ELSE)
         :return: none
         """
-        float(self.request(f':OUTPut {int(value)}'))
+        self.command(f':OUTPut {int(value)}')
 
 
 

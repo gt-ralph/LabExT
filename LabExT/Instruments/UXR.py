@@ -11,9 +11,8 @@ import time
 
 import numpy as np
 
-from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
+from LabExT.Instruments.InstrumentAPI import Instrument
 import oscope_scpi
-from oscope_scpi import Oscilloscope
 
 from os import environ
 
@@ -51,7 +50,7 @@ class UXR(Instrument):
     def __init__(self, *args, **kwargs):
         # call Instrument constructor, creates VISA instrument
         super().__init__(*args, **kwargs)
-        
+        self.uxr_device = None
 
         # self.networked_instrument_properties.extend([
         #     'atten',
@@ -64,28 +63,29 @@ class UXR(Instrument):
 
         :return: None
         """
-        resource = environ.get('OSCOPE_IP',self._address)
-        self._inst = oscope_scpi.UXR(resource,4,0)
-        self._inst.open()
+        print()
+        print(self._address)
+        print()
+        print()
+        uxr_device = oscope_scpi.UXR(self._address)
+        uxr_device = uxr_device.getBestClass(rm=self._resource_manager)
+        uxr_device.open(rm=self._resource_manager)
+        self._inst = uxr_device._inst
+        self.uxr_device = uxr_device
+        print(self._inst.session)
+        print("works!!@!@!#!#!!")
 
-        #Go with no authentication for now
-        #TODO: add actual authentication
-        # authentication = self._inst.query('OUTPUT?')
-        # print(int(authentication.strip()))
-
-        # if int(authentication.strip()) != 0 and int(authentication.strip()) != 1:
-        #     raise InstrumentException(f'Authentication failed, device returned this thing:{authentication}')
     
     def close(self):
         """
             close the oscope safely
         """
-        self._inst.reset()
+
         self._inst.close()
 
     #perform a single capture
     def single(self):
-        self._inst.modeSingle()
+        self.uxr_device.modeSingle()
 
     #return all four waveforms in a kinda gross array
     def get_all_waveforms(self):
@@ -96,7 +96,7 @@ class UXR(Instrument):
     
     #return one waveform
     def get_waveform(self, channel_str):
-        return self._inst.waveformData(channel=channel_str)
+        return self.uxr_device.waveformData(channel=channel_str)
 
 
 
