@@ -13,6 +13,7 @@ import win32com.client as win32
 pythoncom.CoInitialize()
 from datetime import datetime
 from scipy import io
+from scipy.io import savemat
 import os
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 
@@ -41,8 +42,8 @@ class span_sweep(Measurement):
             # 'power supply voltage': MeasParamFloat(value=0, unit='V'),
 
             #attenuation
-            'attenuation value 3db': MeasParamInt(value = 0, unit = 'dBm'),
-            'attenuation value 6db': MeasParamInt(value = 0, unit = 'dBm'),
+            'attenuation value 3db': MeasParamFloat(value = 0.0, unit = 'dBm'),
+            'attenuation value 6db': MeasParamFloat(value = 0.0, unit = 'dBm'),
             'wavelength 3db': MeasParamFloat(value = .000001550, unit='m'),
             'wavelength 6db': MeasParamFloat(value=.000001550, unit = 'm'),
             
@@ -53,7 +54,7 @@ class span_sweep(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Power Supply', 'Attenuator 1', 'Attenuator 2', 'UXR']
+        return ['Attenuator 1', 'Attenuator 2', 'UXR']
 
     def algorithm(self, device, data, instruments, parameters):
         # get the parameters
@@ -80,7 +81,9 @@ class span_sweep(Measurement):
         # open connection to power supply
         # self.instr_ps.open()
         self.instr_a3db.open()
+        self.instr_a3db.output = 1
         self.instr_a6db.open()
+        self.instr_a6db.output = 1
         self.instr_uxr.open()
 
         # clear errors
@@ -121,27 +124,43 @@ class span_sweep(Measurement):
                 self.instr_a3db.atten = attenuation3db + diff_OSNR
                 time.sleep(delay)
 
-                pythoncom.CoInitialize()
-                outlook = win32.Dispatch('outlook.application')
-                mail = outlook.CreateItem(0)
-                mail.To = 'pagarwal306@gatech.edu'
-                mail.Subject = 'Singlemode Status'
-                mail.Body = 'LP =' + str(LP) + ' OSNR =' + str(OSNR)
-                mail.Send()
+                # pythoncom.CoInitialize()
+                # outlook = win32.Dispatch('outlook.application')
+                # mail = outlook.CreateItem(0)
+                # mail.To = 'pagarwal306@gatech.edu'
+                # mail.Subject = 'Singlemode Status'
+                # mail.Body = 'LP =' + str(LP) + ' OSNR =' + str(OSNR)
+                # mail.Send()
 
                 for k in range(num_waveform):
                     self.instr_uxr.single()
-                    for i in channels:
-                        data = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(i))
-                        if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR)):
-                            os.makedirs(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR))
-                        fn = pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR) + '\\' + 'file_' + str(k) + '_channel_' + str(i)
-                        np.save(fn, data)
+                    data1 = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(1))
+                    data2 = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(2))
+                    data3 = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(3))
+                    data4 = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(4))
+                    big_data = np.array([data1[1][0:500000], data2[1][0:500000], data3[1][0:500000], data4[1][0:500000]])
+                    data = {'a':big_data}
+                    if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR)):
+                        os.makedirs(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR))
+                    fn = pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR) + '\\' + 'file_' + str(k+1) + '.mat'
+                    savemat(fn, data)
+
+                        # array = self.instr_uxr.get_waveform(channel_str= "CHAN" + str(i))
+                        # print(array, type(array))
+                        # print()
+                        # print(array[0], type(array[0]))
+                        # print()
+                        # print(array[1], type(array[1]), type(array[1][0]))
+                        # print()
+                        # if not os.path.exists(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR)):
+                        #     os.makedirs(pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR))
+                        # fn = pn + '\\' + 'LP_' + str(LP) + '_OSNR_' + str(OSNR) + '\\' + 'file_' + str(k) + '_channel_' + str(i)
+                        # np.save(fn, array)
 
         # close connection
         # self.instr_ps.close()
         self.instr_a3db.close()
         self.instr_a6db.close()
-        # self.instr_uxr.close()
+        self.instr_uxr.close()
 
 

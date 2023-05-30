@@ -129,7 +129,7 @@ class OptAttenHP8156A(Instrument):
         :input: 1 to turn it on, 0 to turn it off (AND NOTHING ELSE)
         :return: none
         """
-        float(self.request(f':OUTPut {int(value)}'))
+        self.command(f':OUTPut {int(value)}')
 
 
 
