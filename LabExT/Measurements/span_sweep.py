@@ -285,12 +285,12 @@ class span_sweep(Measurement):
 
         mail.Send()
 
-        # mail2 = outlook.CreateItem(0)
-        # mail2.To = 'jhiesener4@gatech.edu'
-        # mail2.Subject = 'Job done'
-        # mail2.Body = 'New data in onedrive folder soon :)'
+        mail2 = outlook.CreateItem(0)
+        mail2.To = 'pagarwal306@gatech.edu'
+        mail2.Subject = 'Job done'
+        mail2.Body = 'New data in onedrive folder soon :)'
 
-        # mail2.Send()
+        mail2.Send()
 
         # sanity check if data contains all necessary keys
         self._check_data(data)
