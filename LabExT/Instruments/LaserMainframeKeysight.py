@@ -151,13 +151,17 @@ class LaserMainframeKeysight(Instrument):
     #
     def triggered_sweep_wl_setup(self, start_nm, stop_nm, step_pm, sweep_speed_nm_per_s=5, nbr_cycles=1):
         self.command('trig0:outp SWST')
+        # self.command('sour:chan:wav:swe:llog 0')
         self.command_channel('sour', ':wav:swe:mode cont')
         self.command_channel('sour', ':wav:swe:star ' + str(start_nm) + 'nm')
         self.command_channel('sour', ':wav:swe:stop ' + str(stop_nm) + 'nm')
+        self.command_channel('sour', ':wav:swe:step ' + str(step_pm) + 'pm')
         self.command_channel('sour', ':wav:swe:spe ' + str(sweep_speed_nm_per_s) + 'nm/s')
         self.command_channel('sour', f':wav:swe:cycl {nbr_cycles}')
 
-        # check if sweep parameters are consistent
+        self.command_channel('sour', ':wav:swe:llog 0')
+
+        # check if sweep parameters are consistenteep_wl_setup
         r = self.request_channel('sour', ':wav:swe:chec?')
         if r[0:4] != '0,OK':
             raise InstrumentException('Sweep parameters incorrectly set! Error message: ' + str(r))
@@ -206,6 +210,8 @@ class LaserMainframeKeysight(Instrument):
         else:
             self.command("trig:conf def")
             self.command_channel("trig", ":outp dis")  # give trigger on WL step finished
+        
+        # self.command('sour:chan:wav:swe:llog 0')
 
         # setup sweep commands
         self.command_channel('sour', ':wav:swe:mode cont')
