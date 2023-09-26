@@ -2,7 +2,7 @@ from LabExT.Measurements.MeasAPI import *
 import time
 import numpy as np
 
-class IL_sweep_trigger_manypd(Measurement):
+class IL_sweep(Measurement):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)  # calling parent constructor
 
