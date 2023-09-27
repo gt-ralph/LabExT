@@ -11,8 +11,9 @@ import numpy as np
 
 from enum import Enum
 
-import py_thorlabs_ctrl.kinesis as KCUBE
-from System import Decimal
+from pylablib.devices import Thorlabs
+# import py_thorlabs_ctrl.kinesis as KCUBE
+# from System import Decimal
 
 from LabExT.Movement.config import Axis
 from LabExT.Movement.Stage import Stage, StageError, assert_stage_connected, assert_driver_loaded
@@ -25,9 +26,10 @@ try:
     with open(settings_path, 'r') as fp:
         module_path = json.load(fp)
     # sys.path.insert(0, module_path)
-    KCUBE.init(module_path)
+    # KCUBE.init(module_path)
     sys_path_changed = True
-    from py_thorlabs_ctrl.kinesis.motor import KCubeDCServo
+    # from Thorlabs import KinesisMotor
+    # from pylablib.devices import Thorlabs
     KCUBE_LOADED = True
 except (ImportError, OSError, FileNotFoundError):
     KCUBE = object()
@@ -77,27 +79,26 @@ class ThorlabsKCube(Stage):
     @classmethod
     @assert_driver_loaded
     def find_stage_addresses(cls): #TODO
+        # Thorlabs.list_kinesis_devices()
         return ["KCUBE"]
     
     class _Channel:
         def __init__(self, serial_number, name='Channel') -> None:
             self.name = name
             self._sn = serial_number
+            print(self._sn)
+            self._stage = Thorlabs.KinesisMotor(self._sn)
             self._status = None
             self._movement_mode = MovementType.RELATIVE
             self._position = None
             self._sensor = None
             self._speed = 0
             self._acceleration = 0
-
-            self._stage = KCubeDCServo(self._sn)
-            self._stage.create()
-            self._stage.enable()
         
         @property
         def status(self) -> int:
             """Returns current channel status specified by SA_GetStatus_S"""
-            self._status = self._stage.get_device()
+            self._status = self._stage.get_status()
 
             return self._status
         
@@ -111,18 +112,18 @@ class ThorlabsKCube(Stage):
         @property
         def speed(self) -> float: #TODO
             """Returns speed setting of channel in micrometers/seconds specified by SA_GetClosedLoopMoveSpeed_S"""
-            self._speed = Decimal.ToDouble(self._stage.get_device().GetVelocityParams().MaxVelocity) * 1e3
+            self._speed = self._stage.get_velocity_parameters()[2] * 1e3
 
             return self._speed
         
         @speed.setter
         def speed(self, umps: float) -> None:
-            self._speed = self._stage.set_velocity(max_velocity=None, acceleration=None)
+            self._speed = self._stage.setup_velocity(max_velocity=None, acceleration=None)
 
         @property
-        def acceleration(self) -> float:
+        def acceleration(self) -> float: 
             """Returns acceleration of channel in micrometers/seconds^2 specified by SA_GetClosedLoopMoveAcceleration_S"""
-            self._acceleration = self._stage.get_acceleration() * 1e3
+            self._acceleration = self._stage.get_velocity_parameters()[1] * 1e3
 
             return self._acceleration
 
@@ -136,12 +137,16 @@ class ThorlabsKCube(Stage):
                 Acceleration measured in um/s^2
             """
             accel = None if umps2 < 1e-8 else umps2/1e3
-            self._acceleration = self._stage.set_velocity(max_velocity=max_velocity, acceleration=accel)
+            self._acceleration = self._stage.setup_velocity(max_velocity=max_velocity, acceleration=accel)
 
         # Channel control
         def stop(self) -> None:
             """Stops all movement of this channel"""
-            self._stage.disable()
+            self._stage.stop(immediate=True)
+
+        def is_moving(self) -> None:
+            """Stops all movement of this channel"""
+            return self._stage.is_moving()
 
         def move(
                 self,
@@ -159,10 +164,12 @@ class ThorlabsKCube(Stage):
             self.movement_mode = mode
             if self.movement_mode == MovementType.RELATIVE:
                 print('rel: ', diff)
-                self._stage.move_relative(diff / 1e3)
+                self._stage.move_by(diff / 1e3)
+                self._stage.wait_for_stop()
             elif self.movement_mode == MovementType.ABSOLUTE:
                 print('abs: ', diff)
-                self._stage.move_absolute(diff / 1e3)
+                self._stage.move_to(diff / 1e3)
+                self._stage.wait_for_stop()
 
 
     def __init__(self, address):
@@ -215,7 +222,7 @@ class ThorlabsKCube(Stage):
     # @assert_stage_connected
     def disconnect(self) -> bool:
         for ch in self.channels:
-            ch._stage.disconnect()
+            ch._stage.close()
         self.connected = False
 
     @assert_driver_loaded
@@ -267,12 +274,10 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     # @assert_stage_connected
     def get_status(self) -> tuple: #TODO
-        return ('STOP', 'STOP', 'STOP')
+        return tuple(ch.status for ch in self.channels.values())
 
     def is_stopped(self, channel, stop_pos_um) -> bool: #TODO
-        tol = 1e-1 #tolerance in microns
-        print('Stopped check', channel.position, stop_pos_um)
-        return (np.abs(channel.position - stop_pos_um) <= tol) 
+        return all(not s for s in self.is_moving())
 
     @assert_driver_loaded
     # @assert_stage_connected
@@ -347,5 +352,5 @@ class ThorlabsKCube(Stage):
         while True:
             time.sleep(delay)
 
-            if self.is_stopped(channel, stop_pos):
+            if self.is_stopped:
                 break
