@@ -24,6 +24,7 @@ from LabExT.View.InstrumentConnectionDebugger import InstrumentConnectionDebugge
 from LabExT.View.LiveViewer.LiveViewerController import LiveViewerController
 from LabExT.View.ProgressBar.ProgressBar import ProgressBar
 from LabExT.View.SearchForPeakPlotsWindow import SearchForPeakPlotsWindow
+from LabExT.View.EdgeCouplingWindow import EdgeCouplingWindow
 from LabExT.View.Movement import (
     CalibrationWizard,
     MoverWizard,
@@ -294,6 +295,16 @@ class MListener:
 
         self.logger.debug('Opening new search for peak window.')
         sfpp = SearchForPeakPlotsWindow(parent=self._root,
+                                        experiment_manager=self._experiment_manager)
+        self.sfpp_toplevel = sfpp.plot_window
+
+    def client_edge_coupling(self):
+        """Called when user wants to open plotting window for edge coupling observation."""
+        if try_to_lift_window(self.sfpp_toplevel):
+            return
+
+        self.logger.debug('Opening new search for peak window.')
+        sfpp = EdgeCouplingWindow(parent=self._root,
                                         experiment_manager=self._experiment_manager)
         self.sfpp_toplevel = sfpp.plot_window
 
