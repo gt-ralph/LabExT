@@ -79,14 +79,13 @@ class ThorlabsKCube(Stage):
     @classmethod
     @assert_driver_loaded
     def find_stage_addresses(cls): #TODO
-        # Thorlabs.list_kinesis_devices()
-        return ["KCUBE"]
+        devices = Thorlabs.list_kinesis_devices()
+        return [{"X":devices[0][0], f"Y":devices[1][0], "Z":devices[2][0]}]
     
     class _Channel:
         def __init__(self, serial_number, name='Channel') -> None:
             self.name = name
             self._sn = serial_number
-            print(self._sn)
             self._stage = Thorlabs.KinesisMotor(self._sn)
             self._status = None
             self._movement_mode = MovementType.RELATIVE
@@ -105,7 +104,8 @@ class ThorlabsKCube(Stage):
         @property
         def position(self):
             """Returns current position of channel in micrometers specified by SA_GetPosition_S"""
-            self._position = self._stage.get_position() * 1e3
+            # position is in steps, One step travels 29 nm
+            self._position = self._stage.get_position() * 29e-6
 
             return self._position
         
@@ -164,11 +164,11 @@ class ThorlabsKCube(Stage):
             self.movement_mode = mode
             if self.movement_mode == MovementType.RELATIVE:
                 print('rel: ', diff)
-                self._stage.move_by(diff / 1e3)
+                self._stage.move_by(diff / 29e-3)
                 self._stage.wait_for_stop()
             elif self.movement_mode == MovementType.ABSOLUTE:
                 print('abs: ', diff)
-                self._stage.move_to(diff / 1e3)
+                self._stage.move_to(diff / 29e-3)
                 self._stage.wait_for_stop()
 
 
@@ -196,8 +196,8 @@ class ThorlabsKCube(Stage):
             self._logger.debug('Stage is already connected.')
             return True
         
-        axes = [Axis.X, Axis.Y]
-        sns = [27258584, 27258581, None]
+        axes = [Axis.X, Axis.Y, Axis.Z]
+        sns = [27265733, 27265718, 27258551]
         
         for sn, axis in zip(sns, axes):
             self.channels[axis] = self._Channel(serial_number=sn)
@@ -235,6 +235,7 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     # @assert_stage_connected
     def set_speed_z(self, umps: float):
+        self.channels[Axis.Z].speed = umps
         self._speed_z = umps
 
     @assert_driver_loaded
@@ -285,7 +286,7 @@ class ThorlabsKCube(Stage):
         return [
             self.channels[Axis.X].position,
             self.channels[Axis.Y].position,
-            0
+            self.channels[Axis.Z].position,
         ]
 
     @assert_driver_loaded
@@ -304,17 +305,26 @@ class ThorlabsKCube(Stage):
             y,
             z)
         
-        print("MOVING RELATIVE", x, y)
+        print("MOVING RELATIVE", x, y, z)
+        print(self.get_position())
 
         stop_pos_um = self.channels[Axis.X].position + x
         self.channels[Axis.X].move(diff=x, mode=MovementType.RELATIVE)
         if wait_for_stopping:
             self._wait_for_stopping(self.channels[Axis.X], stop_pos_um)
 
+        
         stop_pos_um = self.channels[Axis.Y].position + y
         self.channels[Axis.Y].move(diff=y, mode=MovementType.RELATIVE)
         if wait_for_stopping:
             self._wait_for_stopping(self.channels[Axis.Y], stop_pos_um)
+
+        stop_pos_um = self.channels[Axis.Z].position + z
+        self.channels[Axis.Z].move(diff=z, mode=MovementType.RELATIVE)
+        if wait_for_stopping:
+            self._wait_for_stopping(self.channels[Axis.Z], stop_pos_um)
+
+        print(self.get_position())
 
         pass
 
@@ -342,7 +352,11 @@ class ThorlabsKCube(Stage):
             self.channels[Axis.Y].move(diff=y, mode=MovementType.ABSOLUTE)
             if wait_for_stopping:
                 self._wait_for_stopping(self.channels[Axis.Y], stop_pos_um)
-
+        if z is not None:
+            stop_pos_um = z
+            self.channels[Axis.Z].move(diff=z, mode=MovementType.ABSOLUTE)
+            if wait_for_stopping:
+                self._wait_for_stopping(self.channels[Axis.Z], stop_pos_um)
 
     def _wait_for_stopping(self, channel, stop_pos: float, delay=0.05):
         """
