@@ -145,7 +145,7 @@ class PlottingFrame(CustomFrame):
 
         self.set_parameters_button = AcceptButton(self,
                                                   controller.execute_sfp_manually,
-                                                  "2. Save Parameters and Execute Search for Peak")
+                                                  "2. Capture Power, Location, and Image")
         self.set_parameters_button.grid(row=5, column=3)
 
 
@@ -183,11 +183,13 @@ class InstrumentsChooserWidget(InstrumentSelector):
         self.logger = logging.getLogger()
 
         available_instruments = dict()
-        # we specifically only want a laser and a powermeter
+        # we specifically only want a laser and a powermeter and camera
         io_set = get_visa_address('Laser')
         available_instruments.update({'Laser': InstrumentRole(self.parent.parent.root, io_set)})
         io_set = get_visa_address('Power Meter')
         available_instruments.update({'Power Meter': InstrumentRole(self.parent.parent.root, io_set)})
+        io_set = get_visa_address('Camera')
+        available_instruments.update({'Camera': InstrumentRole(self.parent.parent.root, io_set)})
 
         self.title = 'Choose instruments'
         self.instrument_source = available_instruments
