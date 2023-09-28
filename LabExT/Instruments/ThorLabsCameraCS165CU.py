@@ -5,168 +5,160 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
+from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
+from LabExT.Instruments.LabJack import LabJack
+
 import threading
 
-from labjack import ljm
-import time
+import os
 import sys
+import matplotlib.pyplot as plt
 import numpy as np
+from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
+from thorlabs_tsi_sdk.tl_mono_to_color_processor import MonoToColorProcessorSDK
+from thorlabs_tsi_sdk.tl_mono_to_color_enums import COLOR_SPACE
+from thorlabs_tsi_sdk.tl_color_enums import FORMAT
 
-class ThorLabsCameraCS165CU:
-    def __init__(self):
-        self.open()
+
+class ThorLabsCameraCS165CU(Instrument):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @Instrument._open.getter  # weird way to override the parent's class property getter
+    def _open(self):
+        return
 
     def open(self):
-        self.handle = ljm.openS("ANY", "ANY", "ANY")
-        self.info = ljm.getHandleInfo(self.handle)
+        try:
+            # if on Windows, use the provided setup script to add the DLLs folder to the PATH
+            configure_path(abs_path="C://Program Files//Thorlabs//Scientific Imaging//ThorCam")
+        except ImportError:
+            configure_path = None
 
-    def close(self):
-        ljm.close(self.handle)
-
-    def read_from_port(self, port):
-        return ljm.eReadName(self.handle, port)
-
-    def configure_device_for_triggered_stream(self):
-        """Configure the device to wait for a trigger before beginning stream.
-
-        @para handle: The device handle
-        @type handle: int
-        @para triggerName: The name of the channel that will trigger stream to start
-        @type triggerName: str
-        """
-        self.TRIGGER_NAME = "DIO0"
-        address = ljm.nameToAddress(self.TRIGGER_NAME)[0]
-        ljm.eWriteName(self.handle, "STREAM_TRIGGER_INDEX", address)
-
-        # Clear any previous settings on triggerName's Extended Feature registers
-        ljm.eWriteName(self.handle, "%s_EF_ENABLE" % self.TRIGGER_NAME, 0)
-
-        # 5 enables a rising or falling edge to trigger stream
-        ljm.eWriteName(self.handle, "%s_EF_INDEX" % self.TRIGGER_NAME, 12)
-
-        # Enable
-        ljm.eWriteName(self.handle, "%s_EF_ENABLE" % self.TRIGGER_NAME, 1)
-
-    def configure_ljm_for_triggered_stream(self):
-        ljm.writeLibraryConfigS(ljm.constants.STREAM_SCANS_RETURN, ljm.constants.STREAM_SCANS_RETURN_ALL_OR_NONE)
-        ljm.writeLibraryConfigS(ljm.constants.STREAM_RECEIVE_TIMEOUT_MS, 0)
-        # By default, LJM will time out with an error while waiting for the stream
-        # trigger to occur.
-
-    def init_triggered_stream(self):
-        # Ensure triggered stream is disabled.
-        ljm.eWriteName(self.handle, "STREAM_TRIGGER_INDEX", 0)
-
-        # Enabling internally-clocked stream.
-        ljm.eWriteName(self.handle, "STREAM_CLOCK_SOURCE", 0)
-
-        # All negative channels are single-ended, AIN0 and AIN1 ranges are
-        # +/-10 V, stream settling is 0 (default) and stream resolution index
-        # is 0 (default).
-        aNames = ["AIN_ALL_NEGATIVE_CH", "AIN0_RANGE", "AIN1_RANGE",
-                "STREAM_SETTLING_US", "STREAM_RESOLUTION_INDEX"]
-        aValues = [ljm.constants.GND, 10.0, 10.0, 0, 0]
-
-        numFrames = len(aNames)
-        ljm.eWriteNames(self.handle, numFrames, aNames, aValues)
-
-        self.configure_device_for_triggered_stream()
-        self.configure_ljm_for_triggered_stream()
-
-    def start_stream(self, scans_per_read, nc, a_scan_list, scan_rate):
-        return ljm.eStreamStart(self.handle, scans_per_read, nc, a_scan_list, scan_rate)
-
-    def make_scan_list(self, nc, channels):
-        return ljm.namesToAddresses(nc, channels)[0]
-
-    def calculate_sleep_factor(self, scansPerRead, LJMScanBacklog):
-        """Calculates how much sleep should be done based on how far behind stream is.
-
-        @para scansPerRead: The number of scans returned by a eStreamRead call
-        @type scansPerRead: int
-        @para LJMScanBacklog: The number of backlogged scans in the LJM buffer
-        @type LJMScanBacklog: int
-        @return: A factor that should be multiplied the normal sleep time
-        @type: float
-        """
-        DECREASE_TOTAL = 0.9
-        portionScansReady = float(LJMScanBacklog) / scansPerRead
-        if (portionScansReady > DECREASE_TOTAL):
-            return 0.0
-        return (1 - portionScansReady) * DECREASE_TOTAL
-
-    def variable_stream_sleep(self, scansPerRead, scanRate, LJMScanBacklog):
-        """Sleeps for approximately the expected amount of time until the next scan
-        is ready to be read.
-
-        @para scansPerRead: The number of scans returned by a eStreamRead call
-        @type scansPerRead: int
-        @para scanRate: The stream scan rate
-        @type scanRate: numerical
-        @para LJMScanBacklog: The number of backlogged scans in the LJM buffer
-        @type LJMScanBacklog: int
-        """
-        sleepFactor = self.calculate_sleep_factor(scansPerRead, LJMScanBacklog)
-        sleepTime = sleepFactor * scansPerRead / float(scanRate)
-        time.sleep(sleepTime)
-
-    def start_logging(self, max_requests, scans_per_read, new_scan_rate, channels:list, nc: int, vector_length):
-        global_data = []
-
-        totScans = 0
-        totSkip = 0  # Total skipped samples
-
-        i = 1
-        ljmScanBacklog = 0
-
-        while i <= max_requests:
-            self.variable_stream_sleep(scans_per_read, new_scan_rate, ljmScanBacklog)
-            try:
-                ret = ljm.eStreamRead(self.handle)
-                aData = ret[0]
-                ljmScanBacklog = ret[2]
-                scans = len(aData) / nc
-                totScans += scans
-                print(f'totScans: {totScans}')
-                temp = np.array(aData)
-                temp=temp.reshape(scans_per_read, nc,order='C')
-                global_data.append(temp)
-                # Count the skipped samples which are indicated by -9999 values. Missed
-                # samples occur after a device's stream buffer overflows and are
-                # reported after auto-recover mode ends.
-                curSkip = aData.count(-9999.0)
-                totSkip += curSkip
+        with TLCameraSDK() as camera_sdk, MonoToColorProcessorSDK() as mono_to_color_sdk:
+            available_cameras = camera_sdk.discover_available_cameras()
+            if len(available_cameras) < 1:
+                raise ValueError("no cameras detected")
             
-                # if self.verbose:
-                print("\neStreamRead %i" % i)
-                ainStr = ""
-                for j in range(0, nc):
-                    ainStr += "%s = %0.5f, " % (channels[j], aData[j])
-                print("  1st scan out of %i: %s" % (scans, ainStr))
-                print("  Scans Skipped = %0.0f, Scan Backlogs: Device = %i, LJM = "
-                    "%i" % (curSkip/nc, ret[1], ljmScanBacklog))
-                i += 1
-            except ljm.LJMError as err:
-                if err.errorCode == ljm.errorcodes.NO_SCANS_RETURNED:
-                    sys.stdout.write('.')
-                    sys.stdout.flush()
-                    continue
-                else:
-                    raise err
+        self.cam = camera_sdk.open_camera(available_cameras[0])
+
+    def configure_path(abs_path = None):
+        if not abs_path:
+            is_64bits = sys.maxsize > 2**32
+            relative_path_to_dlls = '..' + os.sep + 'dlls' + os.sep
+
+            if is_64bits:
+                relative_path_to_dlls += '64_lib'
+            else:
+                relative_path_to_dlls += '32_lib'
+
+            absolute_path_to_file_directory = os.path.dirname(os.path.abspath(__file__))
+
+            absolute_path_to_dlls = os.path.abspath(absolute_path_to_file_directory + os.sep + relative_path_to_dlls)
+        else:
+            absolute_path_to_dlls = abs_path
+
+        os.environ['PATH'] = absolute_path_to_dlls + os.pathsep + os.environ['PATH']
+
+        print(absolute_path_to_dlls)
 
         try:
-            # if self.verbose:
-            #     print("\nStop Stream")
-            ljm.eStreamStop(self.handle)
-        except ljm.LJMError:
-            ljme = sys.exc_info()[1]
-            print(ljme)
-        except Exception:
-            e = sys.exc_info()[1]
-            print(e)
+            # Python 3.8 introduces a new method to specify dll directory
+            os.add_dll_directory(absolute_path_to_dlls)
+        except AttributeError:
+            pass
 
-        global_data = np.atleast_2d(np.concatenate(global_data)).T
-        # throw away garbage data
-        global_data = global_data[:, 0:vector_length]
+    def snap_photo(self):
+        '''
+        Take photo and save
+        '''
+        try:
+            # if on Windows, use the provided setup script to add the DLLs folder to the PATH
+            configure_path(abs_path="C://Program Files//Thorlabs//Scientific Imaging//ThorCam")
+        except ImportError:
+            configure_path = None
 
-        return global_data
+        NUM_FRAMES = 1  # adjust to the desired number of frames
+
+
+        with MonoToColorProcessorSDK() as mono_to_color_sdk:
+
+            self.cam.frames_per_trigger_zero_for_unlimited = 0  # start camera in continuous mode
+            self.cam.image_poll_timeout_ms = 2000  # 2 second timeout
+            self.cam.arm(2)
+
+            """
+                In a real-world scenario, we want to save the image width and height before color processing so that we 
+                do not have to query it from the camera each time it is needed, which would slow down the process. It is 
+                safe to save these after arming since the image width and height cannot change while the camera is armed.
+            """
+            image_width = self.cam.image_width_pixels
+            image_height = self.cam.image_height_pixels
+
+            self.cam.issue_software_trigger()
+
+            frame = self.cam.get_pending_frame_or_null()
+            if frame is not None:
+                print("frame received!")
+            else:
+                raise ValueError("No frame arrived within the timeout!")
+
+            self.cam.disarm()
+
+            """
+                When creating a mono to color processor, we want to initialize it using parameters from the camera.
+            """
+            with mono_to_color_sdk.create_mono_to_color_processor(
+                self.cam.camera_sensor_type,
+                self.cam.color_filter_array_phase,
+                self.cam.get_color_correction_matrix(),
+                self.cam.get_default_white_balance_matrix(),
+                self.cam.bit_depth
+            ) as mono_to_color_processor:
+                """
+                    Once it is created, we can change the color space and output format properties. sRGB is the default 
+                    color space, and will usually give the best looking image. The output format will determine how the 
+                    transform image data will be structured.
+                """
+                mono_to_color_processor.color_space = COLOR_SPACE.SRGB  # sRGB color space
+                mono_to_color_processor.output_format = FORMAT.RGB_PIXEL  # data is returned as sequential RGB values
+                """
+                    We can also adjust the Red, Green, and Blue gains. These values amplify the intensity of their 
+                    corresponding colors in the transformed image. For example, if Blue and Green gains are set to 0 
+                    and the Red gain is 10, the resulting image will look entirely Red. The most common use case for these 
+                    properties will be for white balancing. By default they are set to model-specific values that gives 
+                    reasonably good white balance in typical lighting.
+                """
+                print("Red Gain = {red_gain}\nGreen Gain = {green_gain}\nBlue Gain = {blue_gain}\n".format(
+                    red_gain=mono_to_color_processor.red_gain,
+                    green_gain=mono_to_color_processor.green_gain,
+                    blue_gain=mono_to_color_processor.blue_gain
+                ))
+                """
+                    When we have all the settings we want for the mono to color processor, we call one of the transform_to 
+                    functions to get a color image. 
+                """
+                # this will give us a resulting image with 3 channels (RGB) and 16 bits per channel, resulting in 48 bpp
+                color_image_48_bpp = mono_to_color_processor.transform_to_48(frame.image_buffer, image_width, image_height)
+
+                # this will give us a resulting image with 4 channels (RGBA) and 8 bits per channel, resulting in 32 bpp
+                color_image_32_bpp = mono_to_color_processor.transform_to_32(frame.image_buffer, image_width, image_height)
+
+                # this will give us a resulting image with 3 channels (RGB) and 8 bits per channel, resulting in 24 bpp
+                color_image_24_bpp = mono_to_color_processor.transform_to_24(frame.image_buffer, image_width, image_height)
+
+                # from here, perform any actions you need to using the color image
+                img_array = np.int16(np.reshape(color_image_24_bpp, (image_height, image_width*3), order='C'))
+                img = [ [] for _ in range(image_height) ]
+                for i in range(image_height):
+                    for j in range(image_width):
+                        img[i].append((img_array[i][j*3], img_array[i][j*3+1], img_array[i][j*3 + 2]))
+
+                self.img = img
+
+                return img
+        #  Because we are using the 'with' statement context-manager, disposal has been taken care of.
+    
+    def get_recent_photo(self):
+        return self.img
+    
