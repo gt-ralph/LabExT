@@ -80,7 +80,7 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     def find_stage_addresses(cls): #TODO
         devices = Thorlabs.list_kinesis_devices()
-        return [{"X":devices[0][0], f"Y":devices[1][0], "Z":devices[2][0]}]
+        return ["KCUBE"]
     
     class _Channel:
         def __init__(self, serial_number, name='Channel') -> None:
@@ -164,11 +164,15 @@ class ThorlabsKCube(Stage):
             self.movement_mode = mode
             if self.movement_mode == MovementType.RELATIVE:
                 print('rel: ', diff)
-                self._stage.move_by(diff / 29e-3)
+                self._stage.setup_jog(mode="step",step_size=diff / 29e-3, stop_mode="immediate")
+                self._stage.jog(direction="+", kind="builtin")
                 self._stage.wait_for_stop()
             elif self.movement_mode == MovementType.ABSOLUTE:
                 print('abs: ', diff)
-                self._stage.move_to(diff / 29e-3)
+                inital_pos = self._stage.get_position() 
+                move_by = diff / 29e-3 - inital_pos
+                self._stage.setup_jog(mode="step",step_size=move_by, stop_mode="immediate")
+                self._stage.jog(direction="+", kind="builtin")
                 self._stage.wait_for_stop()
 
 
