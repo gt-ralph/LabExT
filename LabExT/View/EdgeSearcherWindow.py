@@ -12,10 +12,11 @@ from LabExT.Utils import get_visa_address
 from LabExT.View.Controls.CustomFrame import CustomFrame
 from LabExT.View.Controls.InstrumentSelector import InstrumentRole, InstrumentSelector
 from LabExT.View.Controls.ParameterTable import ParameterTable
+from LabExT.View.Controls.MovementTable import MovementTable
 from LabExT.View.Controls.PlotControl import PlotControl
 
 
-class EdgeCouplingWindowModel:
+class EdgeSearcherWindowModel:
     """
     Model class for SearchForPeakPlotsWindowModel. Contains all data needed.
     All attributes are defined as properties.
@@ -25,7 +26,7 @@ class EdgeCouplingWindowModel:
 
         self.instr_settings_path = None
         self.settings_path = None
-        self.peak_searcher = None
+        self.edge_searcher = None
 
         self.plots_left = None
         self.plots_right = None
@@ -47,12 +48,12 @@ class EdgeCouplingWindowModel:
         self._instr_settings_path = new_path
 
     @property
-    def peak_searcher(self):
-        return self._peak_searcher
+    def edge_searcher(self):
+        return self._edge_searcher
 
-    @peak_searcher.setter
-    def peak_searcher(self, new_peak_searcher):
-        self._peak_searcher = new_peak_searcher
+    @edge_searcher.setter
+    def edge_searcher(self, new_edge_searcher):
+        self._edge_searcher = new_edge_searcher
 
     @property
     def plots_left(self):
@@ -70,17 +71,17 @@ class EdgeCouplingWindowModel:
     def plots_right(self, new_plots_right):
         self._plots_right = new_plots_right
 
-    def load_peak_searcher(self):
-        self.peak_searcher = self.experiment_manager.peak_searcher
+    def load_edge_searcher(self):
+        self.edge_searcher = self.experiment_manager.edge_searcher
 
     def load_settings_paths(self):
-        self.instr_settings_path = "EdgeCouplingPlotsWindows_instr_settings.json"
-        self.settings_path = self.peak_searcher.settings_path_full
+        self.instr_settings_path = "EdgeSearcherPlotsWindows_instr_settings.json"
+        self.settings_path = self.edge_searcher.settings_path_full
 
     def load_observed_list(self):
         # create observed list for plots
-        self.plots_left = self.peak_searcher.plots_left
-        self.plots_right = self.peak_searcher.plots_right
+        self.plots_left = self.edge_searcher.plots_left
+        self.plots_right = self.edge_searcher.plots_right
 
         self.plots_left.item_added.clear()
         self.plots_left.item_removed.clear()
@@ -137,16 +138,26 @@ class PlottingFrame(CustomFrame):
 
         self.set_instruments_button = AcceptButton(self,
                                                    controller.set_instruments,
-                                                   "1. Define Instruments for Search for Peak")
+                                                   "1. Define Instruments Used")
         self.set_instruments_button.grid(row=4, column=3)
 
         self.parameter_chooser_widget = ParameterChooserWidget(self, self.model)
         self.parameter_chooser_widget.grid(row=5, column=0, rowspan=1, columnspan=3)
 
         self.set_parameters_button = AcceptButton(self,
-                                                  controller.execute_sfp_manually,
-                                                  "2. Save Parameters and Execute Search for Peak")
+                                                  controller.execute_instr_open_manually,
+                                                  "2. Open Instruments and Camera")
         self.set_parameters_button.grid(row=5, column=3)
+
+        self.set_parameters_button = AcceptButton(self,
+                                                  controller.execute_grab_data_manually,
+                                                  "3. Capture Power, Location, and Image")
+        self.set_parameters_button.grid(row=6, column=3)
+
+        self.set_parameters_button = AcceptButton(self,
+                                                  controller.end_experiment,
+                                                  "4. End Experiment and Close Instruments")
+        self.set_parameters_button.grid(row=7, column=3)
 
 
 class PlotsWidget(PlotControl):
@@ -183,11 +194,13 @@ class InstrumentsChooserWidget(InstrumentSelector):
         self.logger = logging.getLogger()
 
         available_instruments = dict()
-        # we specifically only want a laser and a powermeter
+        # we specifically only want a laser and a powermeter and camera
         io_set = get_visa_address('Laser')
         available_instruments.update({'Laser': InstrumentRole(self.parent.parent.root, io_set)})
         io_set = get_visa_address('Power Meter')
         available_instruments.update({'Power Meter': InstrumentRole(self.parent.parent.root, io_set)})
+        io_set = get_visa_address('Camera')
+        available_instruments.update({'Camera': InstrumentRole(self.parent.parent.root, io_set)})
 
         self.title = 'Choose instruments'
         self.instrument_source = available_instruments
@@ -196,25 +209,25 @@ class InstrumentsChooserWidget(InstrumentSelector):
             self.logger.debug("Loading SearchForPeak instruments selection from file.")
 
 
-class ParameterChooserWidget(ParameterTable):
+class ParameterChooserWidget(MovementTable):
     """
     This widget contains the parameter selection table.
     """
     def __init__(self, parent, model):
-        ParameterTable.__init__(self, parent)
+        MovementTable.__init__(self, parent)
         self.model = model
 
         self.logger = logging.getLogger()
 
-        self.title = 'Search for Peak Parameters'
-        self.parameter_source = self.model.peak_searcher.parameters
+        self.title = 'Motor Movement'
+        self.parameter_source = self.model.edge_searcher.parameters
         if self.deserialize(self.model.settings_path):
             self.logger.debug("Loading SearchForPeak parameters from file.")
 
         self.__setup__()
 
 
-class EdgeCouplingWindowView:
+class EdgeSearcherWindowView:
     """
     View Class for SearchForPeakPlotsWindow.
     Contains the current_window attribute, and once instanced sets up the window for interaction. Does not contain
@@ -245,19 +258,19 @@ class EdgeCouplingWindowView:
         self._current_window = new_window
 
 
-class EdgeCouplingWindowController:
+class EdgeSearcherWindowController:
     """
     Controller class for SearchForPeakPlotsWindow. Gets set up first, and then sets up both model and view subclasses.
     Contains all logic as function, and is stored as a reference in both the model and view classes.
     """
     def __init__(self, parent: Tk, experiment_manager):
         # set up model and view classes
-        self.model = EdgeCouplingWindowModel(experiment_manager)
+        self.model = EdgeSearcherWindowModel(experiment_manager)
         # load the peak searcher and save it to the model
-        self.model.load_peak_searcher()
+        self.model.load_edge_searcher()
         # load the settings paths and save it to the model
         self.model.load_settings_paths()
-    
+
         # set up the logger
         self.logger = logging.getLogger()
         self.logger.debug('Search for Peak Plots initialised with parent:%s experiment_manager:%s',
@@ -266,7 +279,7 @@ class EdgeCouplingWindowController:
         # load the observed lists datastrucutre from the peak searcher
         self.model.load_observed_list()
 
-        self.view = EdgeCouplingWindowView(parent, self.model, self)
+        self.view = EdgeSearcherWindowView(parent, self.model, self)
 
     def on_close(self):
         """
@@ -309,11 +322,11 @@ class EdgeCouplingWindowController:
 
         self.logger.debug('SearchForPeakPlotsWindows::_set_instruments:')
         for el, val in self.view.main_window.plotting_frame.instruments_chooser_widget.instrument_source.items():
-            self.model.peak_searcher.selected_instruments.update({el: val.choice})
+            self.model.edge_searcher.selected_instruments.update({el: val.choice})
             self.logger.debug('Element %s, Choice %s', el, val.choice)
 
         try:
-            self.model.peak_searcher.init_instruments()
+            self.model.edge_searcher.init_instruments()
         except Exception as err:
             messagebox.showerror("Search for peak error!",
                                  "The instrument definition was not successful. Reason: " + repr(err),
@@ -326,18 +339,50 @@ class EdgeCouplingWindowController:
             self.logger.debug("Search for peak instruments definition done.")
 
         # all good
-        self.model.peak_searcher.initialized = True
-        self.model.experiment_manager.main_window.model.status_sfp_initialized.set(self.model.peak_searcher.initialized)
+        self.model.edge_searcher.initialized = True
+        self.model.experiment_manager.main_window.model.status_sfp_initialized.set(self.model.edge_searcher.initialized)
 
         self.enable_buttons()
 
-    def execute_sfp_manually(self):
+    def execute_instr_open_manually(self):
+        """Function to manually start the search for peak algorithm.
+        """
+
+        self.disable_buttons()
+
+        self.model.edge_searcher.parameters = \
+            self.view.main_window.plotting_frame.parameter_chooser_widget.to_meas_param()
+
+        try:
+            self.model.edge_searcher.prepare_instruments()
+        except Exception as err:
+            messagebox.showerror("Edge searcher instrument error!", "The instruments could not be opened. Reason: " + repr(err),
+                                 parent=self.view.main_window)
+            self.logger.exception("The instruments could not be opened for the edge searcher")
+        else:
+            messagebox.showinfo("Edge Searcher", "Instruments successfully opened for Edge searcher.",
+                                parent=self.view.main_window)
+            self.logger.debug("Instruments successfully opened for Edge searcher.")
+
+        # beautify plots with legends, axes labels, and titles
+        self.view.main_window.plotting_frame.plot_left.ax.legend(loc='lower center')
+        self.view.main_window.plotting_frame.plot_left.set_axes('X Position [um]', 'power [dBm]')
+        self.view.main_window.plotting_frame.plot_left.title = 'X Position'
+        self.view.main_window.plotting_frame.plot_left.__update_canvas__()
+        self.view.main_window.plotting_frame.plot_right.ax.legend(loc='lower center')
+        self.view.main_window.plotting_frame.plot_right.set_axes('Z Position [um]', 'power [dBm]')
+        self.view.main_window.plotting_frame.plot_right.title = 'Z Position'
+        self.view.main_window.plotting_frame.plot_right.__update_canvas__()
+
+        self.enable_buttons()
+
+    def execute_grab_data_manually(self):
         """Function to manually start the search for peak algorithm.
         """
 
         self.disable_buttons()
         # save SFP parameters to measurement
-        self.model.peak_searcher.parameters = \
+        self.model.edge_searcher.parameters = \
             self.view.main_window.plotting_frame.parameter_chooser_widget.to_meas_param()
 
         # save SFP parameters to file
@@ -347,30 +392,50 @@ class EdgeCouplingWindowController:
             self.logger.debug("Saving SearchForPeak instruments definitions to file.")
 
         try:
-            self.model.peak_searcher.search_for_peak()
+            self.model.edge_searcher.capture_data()
         except Exception as err:
             messagebox.showerror("Search for peak error!", "The search for peak algorithm failed. Reason: " + repr(err),
                                  parent=self.view.main_window)
             self.logger.exception("The search for peak algorithm failed.")
         else:
-            messagebox.showinfo("Search for Peak", "Search for peak algorithm done.",
-                                parent=self.view.main_window)
+            # messagebox.showinfo("Search for Peak", "Search for peak algorithm done.",
+            #                     parent=self.view.main_window)
             self.logger.debug("Search for peak algorithm done.")
 
         # beautify plots with legends, axes labels, and titles
-        self.view.main_window.plotting_frame.plot_left.ax.legend(loc='lower center')
-        self.view.main_window.plotting_frame.plot_left.set_axes('deviation from start [um]', 'power [dBm]')
-        self.view.main_window.plotting_frame.plot_left.title = 'Left Stage'
-        self.view.main_window.plotting_frame.plot_left.__update_canvas__()
-        self.view.main_window.plotting_frame.plot_right.ax.legend(loc='lower center')
-        self.view.main_window.plotting_frame.plot_right.set_axes('deviation from start [um]', 'power [dBm]')
-        self.view.main_window.plotting_frame.plot_right.title = 'Right Stage'
-        self.view.main_window.plotting_frame.plot_right.__update_canvas__()
+        # self.view.main_window.plotting_frame.plot_left.ax.legend(loc='lower center')
+        # self.view.main_window.plotting_frame.plot_left.set_axes('deviation from start [um]', 'power [dBm]')
+        # self.view.main_window.plotting_frame.plot_left.title = 'Left Stage'
+        # self.view.main_window.plotting_frame.plot_left.__update_canvas__()
+        # self.view.main_window.plotting_frame.plot_right.ax.legend(loc='lower center')
+        # self.view.main_window.plotting_frame.plot_right.set_axes('deviation from start [um]', 'power [dBm]')
+        # self.view.main_window.plotting_frame.plot_right.title = 'Right Stage'
+        # self.view.main_window.plotting_frame.plot_right.__update_canvas__()
 
         self.enable_buttons()
 
+    def end_experiment(self):
+        """If user selected instruments, initialise them and continue.
+        """
 
-class EdgeCouplingWindow:
+        self.disable_buttons()
+
+        try:
+            self.model.edge_searcher.close_instruments()
+        except Exception as err:
+            messagebox.showerror("Search for peak error!",
+                                 "The instrument definition was not successful. Reason: " + repr(err),
+                                 parent=self.view.main_window)
+            self.logger.exception("The instrument definition was not successful.")
+        else:
+            messagebox.showinfo("Search for Peak",
+                                "Search for peak instruments definition done.",
+                                parent=self.view.main_window)
+            self.logger.debug("Search for peak instruments definition done.")
+
+        self.enable_buttons()
+
+class EdgeSearcherWindow:
     def __init__(self, parent: Tk, experiment_manager):
-        self.controller = EdgeCouplingWindowController(parent, experiment_manager)
+        self.controller = EdgeSearcherWindowController(parent, experiment_manager)
         self.plot_window = self.controller.view.main_window
