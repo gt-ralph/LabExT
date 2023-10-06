@@ -105,7 +105,8 @@ class MainWindowContextMenu(Menu):
         self._movement.add_command(
             label="Edge Coupling",
             command=self._menu_listener.client_edge_coupling,
-            state=NORMAL if self._mover.has_connected_stages else DISABLED)
+            # state=NORMAL if self._mover.has_connected_stages else DISABLED)
+            state=NORMAL)
 
         self._view.add_command(
             label="Open Extra Plots",

@@ -80,7 +80,8 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     def find_stage_addresses(cls): #TODO
         devices = Thorlabs.list_kinesis_devices()
-        return [{"X":devices[0][0], f"Y":devices[1][0], "Z":devices[2][0]}]
+        # return [{"X":devices[0][0], f"Y":devices[1][0], "Z":devices[2][0]}]
+        return ["KCUBE"]
     
     class _Channel:
         def __init__(self, serial_number, name='Channel') -> None:
@@ -197,7 +198,7 @@ class ThorlabsKCube(Stage):
             return True
         
         axes = [Axis.X, Axis.Y, Axis.Z]
-        sns = [27265733, 27265718, 27258551]
+        sns = [27258581, 27258584, 27258547]
         
         for sn, axis in zip(sns, axes):
             self.channels[axis] = self._Channel(serial_number=sn)

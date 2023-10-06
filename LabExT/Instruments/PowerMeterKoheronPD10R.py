@@ -39,6 +39,9 @@ class PowerMeterKoheronPD10R(Instrument):
         return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
 
     def fetch_power(self):
+        print(self.lj.read_from_port(self.lj_port))
+        print(self.voltage_to_dBm(self.lj.read_from_port(self.lj_port)))
+        print()
         return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
     
     def get_instrument_parameter(self):
