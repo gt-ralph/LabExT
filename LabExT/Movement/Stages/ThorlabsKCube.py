@@ -80,7 +80,7 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     def find_stage_addresses(cls): #TODO
         devices = Thorlabs.list_kinesis_devices()
-        return ["KCUBE"]
+        return ["ThorlabsKCube"]
     
     class _Channel:
         def __init__(self, serial_number, name='Channel') -> None:
@@ -180,7 +180,9 @@ class ThorlabsKCube(Stage):
         self.handle = None
         self._speed_z = None
         self._speed_xy = 0
-        
+        self.instr_cfg_path = get_configuration_file_path('instruments.config')
+        self.axes = []
+        self.sns = []
 
     def __str__(self) -> str:
         return "KCUBE Stage at {}".format(self.address_string)
@@ -197,14 +199,23 @@ class ThorlabsKCube(Stage):
         if self.connected:
             self._logger.debug('Stage is already connected.')
             return True
-        
-        axes = [Axis.X, Axis.Y, Axis.Z]
-        sns = [27265733, 27265718, 27258551]
-        
-        for sn, axis in zip(sns, axes):
-            self.channels[axis] = self._Channel(serial_number=sn)
+    
+        with open(self.instr_cfg_path, 'r') as fp:
+            cfg_data = json.load(fp)
+        self.motor_cfg = cfg_data['Mover']['ThorlabsKCube']
 
+        for stage in self.motor_cfg:
+            if stage["axis"] == "X":
+                self.axes.append(Axis.X)
+            elif stage["axis"] == "Y":
+                self.axes.append(Axis.Y)
+            elif stage["axis"] == "Z":
+                self.axes.append(Axis.Z)
+            self.sns.append(stage["sns"])
+
+        for sn, axis in zip(self.sns, self.axes):
             try:
+                self.channels[axis] = self._Channel(serial_number=sn)
                 self.connected = True
 
                 self._logger.info(
