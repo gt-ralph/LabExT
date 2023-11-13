@@ -105,7 +105,7 @@ class ThorlabsKCube(Stage):
         def position(self):
             """Returns current position of channel in micrometers specified by SA_GetPosition_S"""
             # position is in steps, One step travels 29 nm
-            self._position = self._stage.get_position() * 29e-6
+            self._position = self._stage.get_position() * 29e-3
 
             return self._position
         
@@ -163,12 +163,10 @@ class ThorlabsKCube(Stage):
             """
             self.movement_mode = mode
             if self.movement_mode == MovementType.RELATIVE:
-                print('rel: ', diff)
                 self._stage.setup_jog(mode="step",step_size=diff / 29e-3, stop_mode="immediate")
                 self._stage.jog(direction="+", kind="builtin")
                 self._stage.wait_for_stop()
             elif self.movement_mode == MovementType.ABSOLUTE:
-                print('abs: ', diff)
                 inital_pos = self._stage.get_position() 
                 move_by = diff / 29e-3 - inital_pos
                 self._stage.setup_jog(mode="step",step_size=move_by, stop_mode="immediate")
@@ -226,7 +224,7 @@ class ThorlabsKCube(Stage):
     # @assert_stage_connected
     def disconnect(self) -> bool:
         for ch in self.channels:
-            ch._stage.close()
+            ch.close()
         self.connected = False
 
     @assert_driver_loaded
@@ -287,6 +285,8 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     # @assert_stage_connected
     def get_position(self) -> list:
+        """ Returns position in (um)
+        """
         return [
             self.channels[Axis.X].position,
             self.channels[Axis.Y].position,
@@ -308,10 +308,6 @@ class ThorlabsKCube(Stage):
             x,
             y,
             z)
-        
-        print("MOVING RELATIVE", x, y, z)
-        print(self.get_position())
-
         stop_pos_um = self.channels[Axis.X].position + x
         self.channels[Axis.X].move(diff=x, mode=MovementType.RELATIVE)
         if wait_for_stopping:
@@ -327,8 +323,6 @@ class ThorlabsKCube(Stage):
         self.channels[Axis.Z].move(diff=z, mode=MovementType.RELATIVE)
         if wait_for_stopping:
             self._wait_for_stopping(self.channels[Axis.Z], stop_pos_um)
-
-        print(self.get_position())
 
         pass
 
@@ -366,7 +360,6 @@ class ThorlabsKCube(Stage):
         """
         Blocks until all channels have 'SA_STOPPED_STATUS' status.
         """
-        print('wait for stopping')
         while True:
             time.sleep(delay)
 
