@@ -13,6 +13,7 @@ from tkinter import Frame, BOTH, TOP
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.collections import PathCollection
+from matplotlib.image import AxesImage
 from matplotlib.figure import Figure
 
 from LabExT.ViewModel.Utilities.ObservableList import ObservableList
@@ -71,10 +72,30 @@ class PlotData(object):
         self._y = value
         self.__update__()
 
-    def __init__(self, x=None, y=None, plot_type='plot', color=None, **plot_args):
+    _image = None
+
+    @property
+    def image(self):
+        return self._image
+    
+    @image.setter
+    def image(self, value):
+        if type(self._image) is ObservableList:  # if the old value was observable stop listening for changes
+            self._image.item_added.remove(self.__item_changed__)
+            self._image.item_removed.remove(self.__item_changed__)
+
+        if type(value) is ObservableList:  # if the value is observable start listening for changes
+            value.item_added.append(self.__item_changed__)
+            value.item_removed.append(self.__item_changed__)
+
+        self._image = value
+        self.__update__()
+
+    def __init__(self, x=None, y=None, plot_type='plot', image=None, color=None, **plot_args):
         self.data_changed = list()
         self.x = x
         self.y = y
+        self.image = image
         self.plot_type = plot_type
         self.line_handle = None
         self.plot_args = plot_args
@@ -441,8 +462,17 @@ class PlotControl(Frame):
 
     def sanitize_plot_data(self, plot_data: PlotData, sanitize_lengths=True):
         # do nothing if either the x or y data is set to None
-        if plot_data.x is None or plot_data.y is None:
+        if (plot_data.x is None or plot_data.y is None) and plot_data.image is None:
             return None, None
+        
+        if plot_data.plot_type == "image":
+            # If list is empty then imshow needs to plot something
+            if len(plot_data.image) == 0:
+                data_x = np.ones(shape = (2,2))
+            else:
+                data_x = plot_data.image
+            return data_x, None
+        
         # Copy our data into arrays that don't get updated by other threads anymore
         x_data = np.array([x for x in plot_data.x])  # get data for x axis
         y_data = np.array([y for y in plot_data.y])  # get data for y axis
@@ -459,13 +489,16 @@ class PlotControl(Frame):
     def __plotdata_changed__(self, plot_data: PlotData):
         """Gets called if a plot data item gets changed. (e.g. the y collection is overwritten with new data)"""
         x_data, y_data = self.sanitize_plot_data(plot_data=plot_data)
-        if x_data is None or y_data is None:
+        if ((x_data is None) or (y_data is None)) and (plot_data.image is None):
             return
 
         if type(plot_data.line_handle) is PathCollection:
             # case if plot is a scatter plot
             data = np.asarray([x_data, y_data]).transpose()  # prepare data such that it is compatible (2xN)
             plot_data.line_handle.set_offsets(data)  # update scatter plot with new data
+        elif type(plot_data.line_handle) is AxesImage:
+            # case if plot is an image
+            plot_data.line_handle.set_data(x_data)
         elif plot_data.line_handle is not None:
             # other plot types
             plot_data.line_handle.set_xdata(x_data)  # set x data
@@ -480,7 +513,7 @@ class PlotControl(Frame):
         """Plots plot data according to their configuration."""
 
         x_data, y_data = self.sanitize_plot_data(plot_data=plot_data)
-        if x_data is None or y_data is None:
+        if ((x_data is None) and (y_data is None)):
             return
 
         if plot_data.plot_type == 'plot':
@@ -490,6 +523,8 @@ class PlotControl(Frame):
                 plot_data.line_handle = self.ax.plot(x_data, y_data, color=plot_data.color, **plot_data.plot_args)[0]
         elif plot_data.plot_type == 'scatter':
             plot_data.line_handle = self.ax.scatter(x_data, y_data, **plot_data.plot_args)
+        elif plot_data.plot_type == "image":
+            plot_data.line_handle = self.ax.imshow(x_data)
         else:
             raise RuntimeError("Unknown plot type. Use either plot or scatter.")
 
@@ -541,21 +576,24 @@ class PlotControl(Frame):
         for plot_data in self._data_source:  # check each plot for its maximum and minimum values on both axis
 
             x_data, y_data = self.sanitize_plot_data(plot_data=plot_data)
-            if x_data is None or y_data is None:
+            if x_data is None and y_data is None:
                 continue  # skip the plot if its data is not valid because there is no data
 
-            finite_x = np.array(x_data)[np.isfinite(x_data)]
-            finite_y = np.array(y_data)[np.isfinite(y_data)]
+            if plot_data.plot_type == "image":
+                (cx_min, cx_max, cy_min, cy_max) = plot_data.line_handle.get_extent()
+            else:
+                finite_x = np.array(x_data)[np.isfinite(x_data)]
+                finite_y = np.array(y_data)[np.isfinite(y_data)]
 
-            length_x = len(finite_x)
-            length_y = len(finite_y)
-            if length_x == 0 or length_y == 0:
-                continue  # skip the plot if any of the lists do not contain finite points to plot
+                length_x = len(finite_x)
+                length_y = len(finite_y)
+                if length_x == 0 or length_y == 0:
+                    continue  # skip the plot if any of the lists do not contain finite points to plot
 
-            cx_max = np.max(finite_x)  # get maximum x value
-            cx_min = np.min(finite_x)  # get minimum x value
-            cy_max = np.max(finite_y)  # get maximum y value
-            cy_min = np.min(finite_y)  # get minimum y value
+                cx_max = np.max(finite_x)  # get maximum x value
+                cx_min = np.min(finite_x)  # get minimum x value
+                cy_max = np.max(finite_y)  # get maximum y value
+                cy_min = np.min(finite_y)  # get minimum y value
 
             # set all values in first iteration as comparison basis
             if cx_max > x_max or first_iteration:  # set new global maximum x value if the current value is higher

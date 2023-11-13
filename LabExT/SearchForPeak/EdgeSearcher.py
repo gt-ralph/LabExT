@@ -275,18 +275,6 @@ class EdgeSearcher(Measurement):
                 # Save power
                 self.results['measured power'].append(self.instr_powermeter.fetch_power())
 
-                # Plot Power
-                # color_strings = ['C' + str(i) for i in range(10)]
-                meas_plot_left = PlotData(ObservableList(), ObservableList(), 'scatter')
-                self.plots_left.append(meas_plot_left)
-                meas_plot_left.x = [coord[0] for coord in self.results['measured location']]
-                meas_plot_left.y = self.results['measured power']
-
-                meas_plot_right = PlotData(ObservableList(), ObservableList(), 'scatter')
-                self.plots_right.append(meas_plot_right)
-                meas_plot_right.x = [coord[2] for coord in self.results['measured location']]
-                meas_plot_right.y = self.results['measured power']
-
                 # Save picture
                 # self.results['captured image'].append(self.camera.snap_photo())
                 self.captured_img.append(np.uint8(self.camera.snap_photo()))
@@ -302,6 +290,38 @@ class EdgeSearcher(Measurement):
                 plt.imsave(f"{self.save_file_path}\\img_{np.size(self.results['measured power']):03}.png", self.captured_img[-1], dpi=300)
                 np.savez(f"{self.save_file_path}\\imgs.npz", images = self.captured_img)
 
+                # Plot Power
+                # color_strings = ['C' + str(i) for i in range(10)]
+                meas_plot_left_x = PlotData(ObservableList(), ObservableList(), color = 'blue', marker='o', label="x")
+                meas_plot_left_z = PlotData(ObservableList(), ObservableList(), color = 'red', marker='o', label="z")
+                self.plots_left.append(meas_plot_left_x)
+                self.plots_left.append(meas_plot_left_z)
+
+                if len(self.results['measured power']) == 1:
+                    meas_plot_left_x.x = [0.0]
+                    meas_plot_left_x.y = self.results['measured power']
+                    meas_plot_left_z.x = [0.0]
+                    meas_plot_left_z.y = self.results['measured power']
+                else:
+                    meas_plot_left_x.x = [0.0] + [coord[0] - self.results['measured location'][0][0] for coord in self.results['measured location'][1:]]
+                    meas_plot_left_x.y = self.results['measured power']
+                    meas_plot_left_z.x = [0.0] + [coord[2] - self.results['measured location'][0][2] for coord in self.results['measured location'][1:]]
+                    meas_plot_left_z.y = self.results['measured power']
+                # print()
+                # print('HELP')
+                # print(type(meas_plot_left.plot_data))
+
+                meas_plot_right = PlotData(x=None, y=None, plot_type='image', image = ObservableList())
+                self.plots_right.append(meas_plot_right)
+                # meas_plot_right.x = [coord[2] for coord in self.results['measured location']]
+                # meas_plot_right.y = self.results['measured power']
+                meas_plot_right.image = self.captured_img[-1]
+                # print(type(meas_plot_right.image))
+                # plt.imshow(self.captured_img[-1])
+                # plt.show()
+                # print(type(meas_plot_right.plot_data))
+
+                
         return self.results
     
     def close_instruments(self):
