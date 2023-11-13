@@ -20,6 +20,7 @@ from LabExT.Instruments.InstrumentAPI import InstrumentAPI
 from LabExT.Instruments.ReusingResourceManager import ReusingResourceManager
 from LabExT.Movement.MoverNew import MoverNew
 from LabExT.SearchForPeak.PeakSearcher import PeakSearcher
+from LabExT.SearchForPeak.EdgeSearcher import EdgeSearcher
 from LabExT.Utils import DeprecatedException, get_configuration_file_path, get_visa_lib_string
 from LabExT.View.LiveViewer.LiveViewerController import LiveViewerController
 from LabExT.View.MainWindow.MainWindowController import MainWindowController
@@ -68,6 +69,8 @@ class ExperimentManager:
         self.chip = chip
         self.mover = MoverNew(experiment_manager=self, chip=chip)
         self.peak_searcher = PeakSearcher(
+            None, self, mover=self.mover, parent=self.root)
+        self.edge_searcher = EdgeSearcher(
             None, self, mover=self.mover, parent=self.root)
         self.instrument_api = InstrumentAPI(self)
         self.docu = None
