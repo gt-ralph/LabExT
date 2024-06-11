@@ -29,6 +29,7 @@ collision
 # extra GUI widgets
 ttkwidgets
 pillow
+pyqt5
 
 # documentation generation
 mkdocs
@@ -38,6 +39,10 @@ mkdocstrings-python
 
 # auxiliary data structures
 bidict
+
+# interface with instruments
+labjack-ljm
+pylablib
 
 # tools for development
 # pip-tools
