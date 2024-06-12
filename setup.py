@@ -22,6 +22,14 @@ setuptools.setup(
     },
     packages=setuptools.find_packages(),
     install_requires=requirements,
+    extras_require={
+        'ljm': [
+           'labjack-ljm'
+        ],
+        'ova': [
+            'pywin32'
+        ]
+    },
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Science/Research",

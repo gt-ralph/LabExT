@@ -2,7 +2,7 @@
 # DO NOT CHANGE UNLESS YOU KNOW WHAT YOU DO
 #
 # to upgrade all dependencies, run:
-#  pip-compile --upgrade --output-file=requirements.txt .\requirements.in
+#  pip-compile --upgrade --output-file=requirements.txt ./requirements.in
 #
 # see https://pypi.org/project/pip-tools/
 #
@@ -31,6 +31,7 @@ collision
 ttkwidgets
 pillow
 tkinter-tooltip
+pyqt5
 
 # documentation generation
 mkdocs
