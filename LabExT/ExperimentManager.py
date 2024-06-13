@@ -81,6 +81,7 @@ class ExperimentManager:
             None, self, mover=self.mover, parent=self.root)
         self.edge_searcher = EdgeSearcher(
             None, self, mover=self.mover, parent=self.root)
+        self.live_viewer_model = LiveViewerModel = None
         self.instrument_api = InstrumentAPI(self)
         self.chip_source_api = ChipSourceAPI(self)
         self.export_format_api = ExportFormatAPI(self)
