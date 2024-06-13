@@ -20,7 +20,9 @@ collision==1.2.2
     # via -r ./requirements.in
 colorama==0.4.6
     # via
+    #   click
     #   griffe
+    #   mkdocs
     #   mkdocs-material
 contourpy==1.2.1
     # via matplotlib
@@ -30,12 +32,21 @@ fonttools==4.53.0
     # via matplotlib
 ghp-import==2.1.0
     # via mkdocs
-griffe==0.45.3
+
+griffe==0.45.2
     # via mkdocstrings-python
 h5py==3.11.0
     # via -r ./requirements.in
 idna==3.7
     # via requests
+importlib-metadata==7.1.0
+    # via
+    #   markdown
+    #   mkdocs
+    #   mkdocs-get-deps
+    #   mkdocstrings
+importlib-resources==6.4.0
+    # via matplotlib
 jinja2==3.1.4
     # via
     #   mkdocs
@@ -170,3 +181,7 @@ urllib3==2.2.1
     # via requests
 watchdog==4.0.1
     # via mkdocs
+zipp==3.19.2
+    # via
+    #   importlib-metadata
+    #   importlib-resources
