@@ -11,13 +11,15 @@ from LabExT.Instruments.LabJack import LabJack
 import threading
 
 import os
+import platform
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
 
 absolute_path_to_dlls = "C://Program Files//Thorlabs//Scientific Imaging//ThorCam"
-os.environ['PATH'] = absolute_path_to_dlls + os.pathsep + os.environ['PATH']
-os.add_dll_directory(absolute_path_to_dlls)
+if platform.system() == "Windows":
+    os.environ['PATH'] = absolute_path_to_dlls + os.pathsep + os.environ['PATH']
+    os.add_dll_directory(absolute_path_to_dlls)
 
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
 from thorlabs_tsi_sdk.tl_mono_to_color_processor import MonoToColorProcessorSDK
