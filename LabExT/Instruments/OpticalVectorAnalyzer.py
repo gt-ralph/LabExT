@@ -21,8 +21,8 @@ class OpticalVectorAnalyzer(Instrument):
 
         self.labview_app = win32com.client.Dispatch("LabVIEW.Application")
 
-        # Load the VI #TODO: Needs to be generic
-        vi_path = os.path.join('C:\\', 'OVA_5000_SDK_v5.14.3','LabVIEW','ConfigureOVA.vi')
+        # Construct the path to the file relative to the module directory
+        vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'ConfigureOVA.vi')
         vi = self.labview_app.GetVIReference(vi_path)
 
         vi.Run
@@ -35,12 +35,12 @@ class OpticalVectorAnalyzer(Instrument):
         if not instrFound or not CfgOK:
             raise InstrumentException("Instrument Not Found or Config is Wrong")
         else:
-            return
+            self.logger.debug("Successfully connected to OVA")
+            return 
 
-    def grab_data(self, find_dut_L: bool = True, plot_data_type: str = "INSERTION_LOSS", center_wavelength: float = 1550.00, wl_range: float = 2.54):
-        # Load the VI #TODO: Needs to be generic
-        # labview_app = win32com.client.Dispatch("LabVIEW.Application")
-        vi_path = os.path.join('C:\\', 'OVA_5000_SDK_v5.14.3','LabVIEW','Example Top-Level VIs','_AcquireSingleScan.vi')
+    def grab_data(self, find_dut_L: bool = True, plot_data_type: str = "INSERTION_LOSS", center_wavelength: float = 1550.00, wl_range: float = 2.54, save_all_data: bool = False, filepath: str = 'C:\\Users\\Luna\\Documents\\test.txt'):
+        
+        vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'AcquireSingleScan.vi')
         vi = self.labview_app.GetVIReference(vi_path)
 
         wl_range_dict = {
@@ -79,17 +79,24 @@ class OpticalVectorAnalyzer(Instrument):
         vi.SetControlValue("Graph Sel", plot_data_dict[plot_data_type])
         vi.SetControlValue("Center WL", center_wavelength)
         vi.SetControlValue("WL Range", wl_range_dict[wl_range])
+        vi.SetControlValue("Save Data", save_all_data)
+        vi.SetControlValue("Output Spreadsheet File Path", filepath)
+        vi.SetControlValue("Graph Data to Output", [True] * 20)
+        vi.SetControlValue("Filter?", False)
 
         vi.Run
 
         # Grab data in graph object
         result = np.array(vi.GetControlValue("Graph"))
 
+        # self.save_data()
+
         return result
     
     def save_data(self):
         # labview_app = win32com.client.Dispatch("LabVIEW.Application")
-        vi_path = os.path.join('C:\\', 'OVA_5000_SDK_v5.14.3','LabVIEW','WriteOVASprdshtFile.vi')
+        # vi_path = os.path.join('C:\\', 'OVA_5000_SDK_v5.14.3','LabVIEW','WriteOVASprdshtFile.vi')
+        vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'WriteOVASprdshtFile.vi')
         vi = self.labview_app.GetVIReference(vi_path)
 
         # Set control values if any
