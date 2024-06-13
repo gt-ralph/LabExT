@@ -99,8 +99,11 @@ class MainWindowContextMenu(Menu):
         self._movement.add_command(
             label="Search for Peak (Ctrl+S)",
             command=self._menu_listener.client_search_for_peak,
-            state=NORMAL if self._mover.has_connected_stages else DISABLED,
-        )
+            state=NORMAL if self._mover.has_connected_stages else DISABLED)
+        self._movement.add_command(
+            label="Edge Coupling",
+            command=self._menu_listener.client_edge_searcher,
+            state=NORMAL if self._mover.has_connected_stages else DISABLED)
 
         self._view.add_command(label="Open Extra Plots", command=self._menu_listener.client_extra_plots)
         self._view.add_command(

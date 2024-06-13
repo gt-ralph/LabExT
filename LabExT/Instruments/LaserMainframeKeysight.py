@@ -149,6 +149,42 @@ class LaserMainframeKeysight(Instrument):
     #
     #   swept wavelength settings
     #
+    def triggered_sweep_wl_setup(self, start_nm, stop_nm, step_pm, sweep_speed_nm_per_s=5, nbr_cycles=1):
+        self.command('trig0:outp SWST')
+        # self.command('sour:chan:wav:swe:llog 0')
+        self.command_channel('sour', ':wav:swe:mode cont')
+        self.command_channel('sour', ':wav:swe:star ' + str(start_nm) + 'nm')
+        self.command_channel('sour', ':wav:swe:stop ' + str(stop_nm) + 'nm')
+        self.command_channel('sour', ':wav:swe:step ' + str(step_pm) + 'pm')
+        self.command_channel('sour', ':wav:swe:spe ' + str(sweep_speed_nm_per_s) + 'nm/s')
+        self.command_channel('sour', f':wav:swe:cycl {nbr_cycles}')
+
+        self.command_channel('sour', ':wav:swe:llog 0')
+
+        # check if sweep parameters are consistenteep_wl_setup
+        r = self.request_channel('sour', ':wav:swe:chec?')
+        if r[0:4] != '0,OK':
+            raise InstrumentException('Sweep parameters incorrectly set! Error message: ' + str(r))
+
+        # check if chosen laser power can be hold over whole sweeping range
+        pmax_W = float(self.request_channel("sour", ":wav:swe:pmax? " + str(start_nm) + "nm," + str(stop_nm) + "nm"))
+        pmax_dBm = 10 * log10(pmax_W * 1.e3)
+        if "dBm" in self.unit:
+            instr_p_dBm = self.power
+        else:
+            instr_p_dBm = 10 * log10(self.power * 1.e3)
+        if instr_p_dBm > pmax_dBm:
+            raise InstrumentException(("Laser power larger than maximum allowed over sweeping range! " +
+                                       "Maximum in sweep range from {:.2f} nm to {:.2f} nm is {:.2f} dBm and the " +
+                                       "laser is set to {:.2f} dBm.").format(
+                start_nm, stop_nm, pmax_dBm, instr_p_dBm
+            ))
+
+        sweep_time = (stop_nm-start_nm)/sweep_speed_nm_per_s
+
+        self.sweep_configured = True
+
+        return sweep_time
 
     def sweep_wl_setup(self, start_nm, stop_nm, step_pm, sweep_speed_nm_per_s=40, send_hardware_trigger=True):
         """
@@ -174,6 +210,8 @@ class LaserMainframeKeysight(Instrument):
         else:
             self.command("trig:conf def")
             self.command_channel("trig", ":outp dis")  # give trigger on WL step finished
+        
+        # self.command('sour:chan:wav:swe:llog 0')
 
         # setup sweep commands
         self.command_channel('sour', ':wav:swe:mode cont')
@@ -206,6 +244,7 @@ class LaserMainframeKeysight(Instrument):
             ))
         # set class internal flag
         self.sweep_configured = True
+        
 
     def sweep_wl_get_n_points(self):
         """
@@ -219,6 +258,11 @@ class LaserMainframeKeysight(Instrument):
     def sweep_wl_get_total_time(self):
         raise NotImplementedError
 
+    def triggered_sweep_wl_start(self):
+        if not self.sweep_configured:
+            raise InstrumentException("Cannot start sweep if sweep parameters were not configured yet.")
+        self.command_channel("sour", ":wav:swe 1")
+        
     def sweep_wl_start(self):
         """
         Starts the sweeping function immediately.

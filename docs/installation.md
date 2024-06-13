@@ -11,7 +11,7 @@ development for LabExT, follow the [Installation for Development](setup_dev_env.
 After the installation of LabExT, we suggest to configure the available instruments, see
 [Configuration](./settings_configuration.md).
 
-## Installation for Usage
+## Installation for Usage (Generic)
 We assume that you have Anaconda installed (or anything else that provides the conda environment manager). Open the 
 "Anaconda Prompt" console, then the installation for usage is straight forward via conda and pip:
 ```
@@ -23,7 +23,39 @@ pip install LabExT-pkg
 The installation also works into a native Python venv. In any case, we heavily recommend the usage of any type of
 environment (conda, venv, ...) as LabExT installs quite a few dependencies.
 
-### Starting LabExT
+## Installation for Usage (Ralph Lab)
+Follow the setup steps based on which lab equipment you'd like to talk to
+
+### Thorlabs Motors
+1. Clone our forked repository for pylablib
+```python
+git clone https://github.com/gt-ralph/pyLabLib.git 
+pip install -e
+```
+2. Install [Thorlabs Kinesis Driver software](https://www.thorlabs.com/software_pages/ViewSoftwarePage.cfm?Code=Motion_Control&viewtab=0)
+
+3. After opening LabExT, update the path for the kcube drivers to: ```C:\Program Files\Thorlabs\Kinesis```
+
+### LabJack
+1. Install the [LabJack-T7 drivers](https://support.labjack.com/docs/ljm-software-installer-downloads-t4-t7-t8-digit)
+
+2. Add the `ljm` flag to the pip install: ```pip install -e .[ljm]```
+
+### Thorcam Control
+1. Download the [Thorcam SDK](https://www.thorlabs.com/software_pages/ViewSoftwarePage.cfm?Code=ThorCam)
+    - Programming Interaces: Windows SDK and Doc. for Scientific Cameras
+2. Follow [these build instructons](https://github.com/Thorlabs/Camera_Examples/tree/main/Python)
+
+### OVA Control
+1. Install LabView 32-bit. IT IS IMPERATIVE YOU USE 32 bit.
+2. Get a student license from Tech 
+3. Add the `ova` flag to the pip install: ```pip install -e .[ova]```
+
+### Additional tools you may find useful
+1. [Everything](https://www.voidtools.com/downloads/) - File search tool
+2. [KLayout](https://www.klayout.de/build.html) - GDS file viewer
+
+## Starting LabExT
 
 Once you installed LabExT and you wish to (re)start LabExT,
 its sufficient to simply activate the conda environment again and then start LabExT.
