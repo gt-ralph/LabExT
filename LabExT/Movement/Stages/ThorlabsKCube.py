@@ -86,7 +86,7 @@ class ThorlabsKCube(Stage):
         def __init__(self, serial_number, name='Channel') -> None:
             self.name = name
             self._sn = serial_number
-            self._stage = Thorlabs.KinesisMotor(self._sn)
+            self._stage = Thorlabs.KinesisMotor(self._sn, scale="Z825")
             self._status = None
             self._movement_mode = MovementType.RELATIVE
             self._position = None
@@ -96,47 +96,46 @@ class ThorlabsKCube(Stage):
         
         @property
         def status(self) -> int:
-            """Returns current channel status specified by SA_GetStatus_S"""
+            """Returns current channel status"""
             self._status = self._stage.get_status()
 
             return self._status
         
         @property
         def position(self):
-            """Returns current position of channel in micrometers specified by SA_GetPosition_S"""
-            # position is in steps, One step travels 29 nm
-            self._position = self._stage.get_position() * 29e-3
+            """Returns current position of channel in micrometers"""
+            self._position = self._stage.get_position() * 1e6
 
             return self._position
         
         @property
         def speed(self) -> float: #TODO
-            """Returns speed setting of channel in micrometers/seconds specified by SA_GetClosedLoopMoveSpeed_S"""
-            self._speed = self._stage.get_velocity_parameters()[2] * 1e3
+            """Returns maximum speed setting of channel in micrometers/seconds"""
+            self._speed = self._stage.get_velocity_parameters()[2] * 1e6
 
             return self._speed
         
         @speed.setter
         def speed(self, umps: float) -> None:
-            self._speed = self._stage.setup_velocity(max_velocity=None, acceleration=None)
+            self._speed = self._stage.setup_velocity(max_velocity=umps*1e-6, acceleration=None)
 
         @property
         def acceleration(self) -> float: 
-            """Returns acceleration of channel in micrometers/seconds^2 specified by SA_GetClosedLoopMoveAcceleration_S"""
-            self._acceleration = self._stage.get_velocity_parameters()[1] * 1e3
+            """Returns acceleration of channel in micrometers/seconds^2"""
+            self._acceleration = self._stage.get_velocity_parameters()[1] * 1e6
 
             return self._acceleration
 
         @acceleration.setter
         def acceleration(self, umps2: float, max_velocity=None) -> None:
-            """Sets acceleration of channel in micrometers/seconds^2 by calling SA_SetClosedLoopMoveAcceleration_S
+            """Sets acceleration of channel in micrometers/seconds^2
 
             Parameters
             ----------
             umps2 : float
                 Acceleration measured in um/s^2
             """
-            accel = None if umps2 < 1e-8 else umps2/1e3
+            accel = None if umps2 < 1e-8 else umps2/1e6
             self._acceleration = self._stage.setup_velocity(max_velocity=max_velocity, acceleration=accel)
 
         # Channel control
@@ -145,7 +144,7 @@ class ThorlabsKCube(Stage):
             self._stage.stop(immediate=True)
 
         def is_moving(self) -> None:
-            """Stops all movement of this channel"""
+            """Checks if the channel is moving"""
             return self._stage.is_moving()
 
         def move(
@@ -163,16 +162,19 @@ class ThorlabsKCube(Stage):
             """
             self.movement_mode = mode
             if self.movement_mode == MovementType.RELATIVE:
-                self._stage.setup_jog(mode="step",step_size=diff / 29e-3, stop_mode="immediate")
+                self._stage.setup_jog(mode="step", step_size=diff*1e-6, stop_mode="immediate")
                 self._stage.jog(direction="+", kind="builtin")
                 self._stage.wait_for_stop()
             elif self.movement_mode == MovementType.ABSOLUTE:
-                inital_pos = self._stage.get_position() 
-                move_by = diff / 29e-3 - inital_pos
-                self._stage.setup_jog(mode="step",step_size=move_by, stop_mode="immediate")
+                inital_pos = self.position
+                move_by = round(diff - inital_pos, 3) * 1e-6
+                self._stage.setup_jog(mode="step", step_size=move_by, stop_mode="immediate")
                 self._stage.jog(direction="+", kind="builtin")
-                self._stage.wait_for_stop()
+                self._stage.wait_move()
 
+        def wait_for_stopping(self) -> None:
+            """Waits until the channel stops moving"""
+            self._stage.wait_move()
 
     def __init__(self, address):
         super().__init__(address)
@@ -219,7 +221,7 @@ class ThorlabsKCube(Stage):
                 self.connected = True
 
                 self._logger.info(
-                    'PiezoStage at {} initialised successfully.'.format(
+                    'KCube at {} initialised successfully.'.format(
                         self.address))
 
             except Exception as e:
@@ -319,21 +321,12 @@ class ThorlabsKCube(Stage):
             x,
             y,
             z)
-        stop_pos_um = self.channels[Axis.X].position + x
         self.channels[Axis.X].move(diff=x, mode=MovementType.RELATIVE)
-        if wait_for_stopping:
-            self._wait_for_stopping(self.channels[Axis.X], stop_pos_um)
-
-        
-        stop_pos_um = self.channels[Axis.Y].position + y
         self.channels[Axis.Y].move(diff=y, mode=MovementType.RELATIVE)
-        if wait_for_stopping:
-            self._wait_for_stopping(self.channels[Axis.Y], stop_pos_um)
-
-        stop_pos_um = self.channels[Axis.Z].position + z
         self.channels[Axis.Z].move(diff=z, mode=MovementType.RELATIVE)
+       
         if wait_for_stopping:
-            self._wait_for_stopping(self.channels[Axis.Z], stop_pos_um)
+            self._wait_for_stopping(self.channels)
 
         pass
 
@@ -352,27 +345,18 @@ class ThorlabsKCube(Stage):
             z)
 
         if x is not None:
-            stop_pos_um = x
             self.channels[Axis.X].move(diff=x, mode=MovementType.ABSOLUTE)
-            if wait_for_stopping:
-                self._wait_for_stopping(self.channels[Axis.X], stop_pos_um)
         if y is not None:
-            stop_pos_um = y
             self.channels[Axis.Y].move(diff=y, mode=MovementType.ABSOLUTE)
-            if wait_for_stopping:
-                self._wait_for_stopping(self.channels[Axis.Y], stop_pos_um)
         if z is not None:
-            stop_pos_um = z
             self.channels[Axis.Z].move(diff=z, mode=MovementType.ABSOLUTE)
-            if wait_for_stopping:
-                self._wait_for_stopping(self.channels[Axis.Z], stop_pos_um)
+        
+        if wait_for_stopping:
+            self._wait_for_stopping(self.channels)
 
-    def _wait_for_stopping(self, channel, stop_pos: float, delay=0.05):
+    def _wait_for_stopping(self, channels: list[_Channel]):
         """
         Blocks until all channels have 'SA_STOPPED_STATUS' status.
         """
-        while True:
-            time.sleep(delay)
-
-            if self.is_stopped:
-                break
+        for axis, channel in channels.items():
+            channel.wait_for_stopping()

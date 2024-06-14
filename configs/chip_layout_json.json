@@ -6,7 +6,22 @@
     },
     {
         "ID": "001",
-        "Inputs": [[-104.719,-13.5]],
+        "Inputs": [[1000, 1000]],
+        "Type": "Loopback"
+    },
+    {
+        "ID": "002",
+        "Inputs": [[2000, 2000]],
+        "Type": "Loopback"
+    },
+    {
+        "ID": "003",
+        "Inputs": [[3000, 3000]],
+        "Type": "Loopback"
+    },
+    {
+        "ID": "004",
+        "Inputs": [[4000, 4000]],
         "Type": "Loopback"
     }
 ]

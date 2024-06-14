@@ -11,7 +11,7 @@ from LabExT.Measurements.MeasAPI import *
 
 
 class InsertionLossSweep(Measurement):
-    """
+    r"""
     ## InsertionLossSweep
 
     This measurement uses a tunable laser source to make a fast high-resolution spectral measurement by sweeping the

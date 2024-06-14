@@ -13,10 +13,29 @@ import numpy as np
 import pythoncom
 
 class OpticalVectorAnalyzer(Instrument):
+    """
+    ### Optical Vector Analyzer (OVA) ###
+    This class is used to control the Optical Vector Analyzer (OVA) from Luna Innovations. There are two available OVAs: 5100 (C-band) and 5113 (O-band).
+
+    The OVA is a high-performance optical spectrum analyzer that provides accurate and reliable test and measurement data for a wide range of optical components and systems. It is based on the proven Michelson interferometer design and is capable of measuring the spectral characteristics of optical signals with high resolution and accuracy.
+
+    The current implementation of the OVA class is based on the LabVIEW SDK provided by Luna Innovations. The SDK provides a set of LabVIEW VIs that can be used to control the OVA and acquire measurement data. The OVA class uses the win32com.client module to interact with the LabVIEW VIs and control the OVA.
+
+    
+
+    #### Methods
+
+    * **grab_data()**: Acquire measurement data from the OVA.
+
+    
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def open(self):
+        """
+        Open the connection to the OVA. Ensure that the OVA is connected to the computer and the LabVIEW SDK is installed.
+        """
         pythoncom.CoInitialize()
 
         self.labview_app = win32com.client.Dispatch("LabVIEW.Application")
@@ -39,6 +58,16 @@ class OpticalVectorAnalyzer(Instrument):
             return 
 
     def grab_data(self, find_dut_L: bool = True, plot_data_type: str = "INSERTION_LOSS", center_wavelength: float = 1550.00, wl_range: float = 2.54, save_all_data: bool = False, filepath: str = 'C:\\Users\\Luna\\Documents\\test.txt'):
+        """
+        Acquire measurement data from the OVA.
+
+        :param find_dut_L: bool Find DUT Length
+        :param plot_data_type: str Plot Measurement Type
+        :param center_wavelength: float Center Wavelength
+        :param wl_range: float Wavelength Range
+        :param save_all_data: bool flag to save all data
+        :param filepath: str filepath to temporarily save all data
+        """
         
         vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'AcquireSingleScan.vi')
         vi = self.labview_app.GetVIReference(vi_path)
@@ -92,22 +121,10 @@ class OpticalVectorAnalyzer(Instrument):
         # self.save_data()
 
         return result
-    
-    def save_data(self):
-        # labview_app = win32com.client.Dispatch("LabVIEW.Application")
-        # vi_path = os.path.join('C:\\', 'OVA_5000_SDK_v5.14.3','LabVIEW','WriteOVASprdshtFile.vi')
-        vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'WriteOVASprdshtFile.vi')
-        vi = self.labview_app.GetVIReference(vi_path)
 
-        # Set control values if any
-        vi.SetControlValue("Output Spreadsheet File Path", "C:\\Users\\Luna\\Documents\\test.txt")
-        vi.SetControlValue("Graph Data to Output", [True] * 20)
-
-        vi.Run
-
-    # def close(self):
-    #     pythoncom.CoUninitialize()
-    #     return
+    def close(self):
+        pythoncom.CoUninitialize()
+        return
 
     def idn(self):
         return f"OVA"
