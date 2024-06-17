@@ -5,26 +5,26 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
-from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
-from LabExT.Instruments.LabJack import LabJack
+# import threading
 
-import threading
+# import os
+# import platform
+# import sys
+# import matplotlib.pyplot as plt
+# import numpy as np
 
-import os
-import platform
-import sys
-import matplotlib.pyplot as plt
-import numpy as np
+# absolute_path_to_dlls = "C://Program Files//Thorlabs//Scientific Imaging//ThorCam"
+# if platform.system() == "Windows":
+#     os.environ['PATH'] = absolute_path_to_dlls + os.pathsep + os.environ['PATH']
+#     os.add_dll_directory(absolute_path_to_dlls)
 
-absolute_path_to_dlls = "C://Program Files//Thorlabs//Scientific Imaging//ThorCam"
-if platform.system() == "Windows":
-    os.environ['PATH'] = absolute_path_to_dlls + os.pathsep + os.environ['PATH']
-    os.add_dll_directory(absolute_path_to_dlls)
+# from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
+# from thorlabs_tsi_sdk.tl_mono_to_color_processor import MonoToColorProcessorSDK
+# from thorlabs_tsi_sdk.tl_mono_to_color_enums import COLOR_SPACE
+# from thorlabs_tsi_sdk.tl_color_enums import FORMAT
 
-from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
-from thorlabs_tsi_sdk.tl_mono_to_color_processor import MonoToColorProcessorSDK
-from thorlabs_tsi_sdk.tl_mono_to_color_enums import COLOR_SPACE
-from thorlabs_tsi_sdk.tl_color_enums import FORMAT
+from LabExT.Instruments.InstrumentAPI import Instrument
+from pylablib.devices import Thorlabs
 
 class CameraThorLabsCS165CU(Instrument):
     def __init__(self, *args, **kwargs):
@@ -32,17 +32,22 @@ class CameraThorLabsCS165CU(Instrument):
 
     def open(self):
         
-        camera_sdk = TLCameraSDK()
-        available_cameras = camera_sdk.discover_available_cameras()
-        if len(available_cameras) < 1:
-            raise ValueError("no cameras detected")
+        # camera_sdk = TLCameraSDK()
+        # available_cameras = camera_sdk.discover_available_cameras()
+        # if len(available_cameras) < 1:
+        #     raise ValueError("no cameras detected")
             
-        self.cam = camera_sdk.open_camera(available_cameras[0])
+        # self.cam = camera_sdk.open_camera(available_cameras[0])
+
+        #TODO: add camera serial numbers and error checking
+        self.cam = Thorlabs.ThorlabsTLCamera()
 
     def snap_photo(self):
         '''
         Take photo and save
         '''
+        self.img = self.cam.snap()
+        return self.img
 
         with MonoToColorProcessorSDK() as mono_to_color_sdk:
 
@@ -124,4 +129,4 @@ class CameraThorLabsCS165CU(Instrument):
         return self.img
     
     def close(self):
-        return self.cam.dispose()
+        return self.cam.close()
