@@ -45,14 +45,16 @@ class DMD(Stage):
 
     def __init__(self, address):
         super().__init__(address)
-
+        self.connected = False
+        self.id_list = None
+        self.connect()
         """
         self._speed_xy = None
         self._speed_z = None
         self._acceleration_xy = None"""
 
     def __str__(self) -> str:
-        return "Dummy Stage at {}".format(self.address_string)
+        return "DMD Stage at {}".format(self.address_string)
 
     @property
     def address_string(self) -> str:
@@ -61,10 +63,33 @@ class DMD(Stage):
     @property
     def identifier(self) -> str:
         return self.address_string
-
+    """
+    def get_ids(self) -> list:
+        if self.connected():
+            self.id_list = []
+            self.devices = [self.motors,self.multi,self.attenuator]
+            query = ['ID ?','*IDN', 'IDN?']
+            for device in self.devices:
+    
+                
+        else:
+            return [] 
+    """
     def connect(self) -> bool:
-        self.connected = True
-        return True
+        if self.connected:
+            self._logger.info('All stages are already connected')
+            return True
+        else:
+            try:
+                rm = visa.ResourceManager()
+                self.motors = rm.open_resource('GPIB0::10::INSTR')
+                self.multi = rm.open_resource('GPIB0::21:INSTR')
+                self.attenuator = rm.open_resource('GPIB0::27::INSTR')
+                self.connected = True
+                self._logger.info('All stages connected')
+            except:
+                self._logger.info('Failed to connect 1 or more stages')
+            return self.connected
 
     def disconnect(self) -> bool:
         self.connected = False
@@ -98,14 +123,13 @@ class DMD(Stage):
     def get_position(self) -> list:
         return [0, 0, 0]
 
-    def move_absolute(ax,pos, newport):
-	newport.write(f'{ax}PA{pos}')
-	newport.query(f'{ax}MD?')
-	resp = newport.read() # information on response from MD---> successful motion or not
+    def move_absolute(ax,pos, motors):
+	motors.write(f'{ax}PA{pos}')
+	motors.query(f'{ax}MD?')
+	resp = motors.read() # information on response from MD---> successful motion or not
 	while resp[0] == '0':
-		newport.query(f'{ax}MD?')
-		resp = newport.read()
-
+		motors.query(f'{ax}MD?')
+		resp = motors.read()
     
     """
     def move_relative(
