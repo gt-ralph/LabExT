@@ -92,6 +92,9 @@ class DMD(Stage):
             return self.connected
 
     def disconnect(self) -> bool:
+        self.motors.close()
+        self.multi.close()
+        self.attenuator.close()
         self.connected = False
         return True
 
@@ -116,34 +119,37 @@ class DMD(Stage):
     def get_status(self) -> tuple:
         return ('STOP', 'STOP', 'STOP')
 
-    @property
+    @property 
     def is_stopped(self) -> bool:
         return all(s == 'STOP' for s in self.get_status())
 
     def get_position(self) -> list:
-        return [0, 0, 0]
+        xPos = motors.query(f'1TP?')
+        yPos = motors.query(f'2TP?')
+        zPos = motors.query(f'3TP?')
+        return [xPos, yPos, zPos]
 
-    def move_absolute(ax,pos, motors):
-	motors.write(f'{ax}PA{pos}')
-	motors.query(f'{ax}MD?')
-	resp = motors.read() # information on response from MD---> successful motion or not
-	while resp[0] == '0':
-		motors.query(f'{ax}MD?')
-		resp = motors.read()
+    def move_absolute(self,
+            xPos: float = 0,
+            yPos: float = 0,
+            zPos: float = 0) -> None:
+	    motors.write(f'1PA{xPos}')
+	    resp = motors.query(f'{ax}MD?') # information on response from MD---> successful motion or not
+	    while resp[0] == '0':
+		    resp = motors.query(f'{ax}MD?')
+        motors.write(f'2PA{yPos}')
+        resp = motors.query(f'{ax}MD?')
+	    while resp[0] == '0':
+		    resp = motors.query(f'{ax}MD?')
+        motors.write(f'3PA{zPos}')
+        resp = motors.query(f'{ax}MD?') 
+	    while resp[0] == '0':
+		    resp = motors.query(f'{ax}MD?')        
     
-    """
     def move_relative(
             self,
-            x: float = 0,
-            y: float = 0,
-            z: float = 0,
-            wait_for_stopping: bool = True) -> None:
-        pass
-
-    def move_absolute(
-            self,
-            x: float = None,
-            y: float = None,
-            z: float = None,
-            wait_for_stopping: bool = True) -> None:
-        pass"""
+            xPos: float = 0,
+            yPos: float = 0,
+            zPos: float = 0) -> None:
+        pass00
+0
