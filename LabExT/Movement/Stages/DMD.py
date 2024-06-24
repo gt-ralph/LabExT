@@ -3,6 +3,7 @@ from LabExT.Movement.config import Axis
 from LabExT.Movement.Stage import Stage, StageError, assert_stage_connected, assert_driver_loaded
 from LabExT.Utils import get_configuration_file_path, try_to_lift_window
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
+import time
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -14,7 +15,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 from LabExT.Movement.Stage import Stage
 
 """
-Addresses:
+GPIB Addresses:
 1. motors - 10 - newport esp300
 2. multimeter - 21 - agilent 34401A lab multimeter (hp)
 3. attenuator - 27 - exfoFVA-3100
@@ -30,14 +31,15 @@ class DMD(Stage):
 
     driver_loaded = True
     driver_specifiable = False
-    description = "Dummy Stage Vendor"
+    description = "DMD Stage"
 
     @classmethod
     def find_stage_addresses(cls):
-        return [
+        """return [
             'tcp:192.168.0.42:1234',
             'tcp:192.168.0.123:7894'
-        ]
+        ]"""
+        pass
 
     @classmethod
     def load_driver(cls):
@@ -92,11 +94,26 @@ class DMD(Stage):
             return self.connected
 
     def disconnect(self) -> bool:
-        self.motors.close()
-        self.multi.close()
-        self.attenuator.close()
-        self.connected = False
-        return True
+        if self.connected:
+            self.motors.close()
+            self.multi.close()
+            self.attenuator.close()
+            self.connected = False
+            return True
+        else:
+            return False
+        
+    def resetInstruments(self):
+        rm = visa.ResourceManager()
+        resources = list(rm.list_resources())
+        for resource in resources:
+            try:
+                resource.close()
+                self._logger.info(f'{resource} + closed')
+            except:
+                self._logger.info(f'{resource} could not be closed')
+        self.connect()
+
 
     def set_speed_xy(self, umps: float):
         self._speed_xy = umps
@@ -124,32 +141,232 @@ class DMD(Stage):
         return all(s == 'STOP' for s in self.get_status())
 
     def get_position(self) -> list:
-        xPos = motors.query(f'1TP?')
-        yPos = motors.query(f'2TP?')
-        zPos = motors.query(f'3TP?')
+        xPos = self.motors.query(f'1TP?')
+        yPos = self.motors.query(f'2TP?')
+        zPos = self.motors.query(f'3TP?')
         return [xPos, yPos, zPos]
 
-    def move_absolute(self,
-            xPos: float = 0,
-            yPos: float = 0,
-            zPos: float = 0) -> None:
-	    motors.write(f'1PA{xPos}')
-	    resp = motors.query(f'{ax}MD?') # information on response from MD---> successful motion or not
-	    while resp[0] == '0':
-		    resp = motors.query(f'{ax}MD?')
-        motors.write(f'2PA{yPos}')
-        resp = motors.query(f'{ax}MD?')
-	    while resp[0] == '0':
-		    resp = motors.query(f'{ax}MD?')
-        motors.write(f'3PA{zPos}')
-        resp = motors.query(f'{ax}MD?') 
-	    while resp[0] == '0':
-		    resp = motors.query(f'{ax}MD?')        
-    
     def move_relative(
             self,
             xPos: float = 0,
             yPos: float = 0,
             zPos: float = 0) -> None:
-        pass00
-0
+        xCurr = self.motors.query('1TP?')
+        yCurr = self.motors.query('2TP?')
+        zCurr = self.motors.query('3TP?')
+        diffX = float(xCurr) - xPos
+        diffY = float(yCurr) - yPos
+        diffZ = float(zCurr) - zPos
+        if diffX != 0:
+            self.motors.write(f'1PR{xPos}')
+            resp = self.motors.query(f'1MD?')
+            while resp[0] == '0':
+                resp = self.motors.query(f'1MD?')
+            self.motors.write(f'2PR{yPos}')
+        if diffY != 0:
+            resp = self.motors.query(f'2MD?')
+            while resp[0] == '0':
+                resp = self.motors.query(f'2MD?')
+            self.motors.write(f'3PR{zPos}')
+        if diffZ != 0:
+            resp = self.motors.query(f'3MD?') 
+            while resp[0] == '0':
+                resp = self.motors.query(f'3MD?')
+            return None
+        
+    def move_absolute(self,
+            xPos: float = 0,
+            yPos: float = 0,
+            zPos: float = 0) -> None:
+        xCurr = self.motors.query('1TP?')
+        yCurr = self.motors.query('2TP?')
+        zCurr = self.motors.query('3TP?')
+        diffX = float(xCurr) - xPos
+        diffY = float(yCurr) - yPos
+        diffZ = float(zCurr) - zPos
+        if diffX != 0:
+            self.motors.write(f'1PA{xPos}')
+            resp = self.motors.query(f'1MD?') # information on response from MD---> successful motion or not
+            while resp[0] == '0':
+                resp = self.motors.query(f'1MD?')
+        if diffY != 0:
+            self.motors.write(f'2PA{yPos}')
+            resp = self.motors.query(f'2MD?')
+            while resp[0] == '0':
+                resp = self.motors.query(f'2MD?')
+        if diffZ != 0:
+            self.motors.write(f'3PA{zPos}')
+            resp = self.motors.query(f'3MD?') 
+            while resp[0] == '0':
+                resp = self.motors.query(f'3MD?')
+        return None     
+    
+    
+    def goHome(self) -> list:
+        # Defining home
+        self.motors.write(f'1DH0')
+        self.motors.write(f'2DH0')
+        self.motors.write(f'3DH0')
+        # moving home
+        self.move_absolute(0,0,0)
+        # verify
+        x = self.motors.query('1TP')
+        y = self.motors.query('2TP')
+        z = self.motors.query('3TP')
+        return [x,y,z]
+    
+    def line(self,
+            ax: float,
+            start: float = 0,
+            stop: float = 0,
+            step: float = 0) -> None:
+        for i in range(start,stop,step):
+            if ax == 1:
+                self.move_absolute(i,0,0)
+            if ax == 2:
+                self.move_absolute(0,i,0)
+            else:
+                self.move_absolute(0,0,i)
+    
+    # ALTER BEAM PROFILE FUNCTION BASED ON FIBER DIMENSIONS.
+    def beam_profile(self) -> list:
+        # Horizontal profile
+        self.resetInstruments()
+        self.motors.write(f'1DH0')
+        self.motors.write(f'2DH0')
+        self.motors.write(f'3DH0')
+        # Initial current (or power?) measurement
+        currentInit = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        #voltageInit = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        currentInit = float(currentInit.strip())
+        #voltageInit = float(voltageInit.strip())
+        #powerInit = currentInit * voltageInit
+        x = self.motors.query('1TP')
+        y = self.motors.query('2TP')
+        z = self.motors.query('3TP')
+        print(x,y,z)
+        p = []
+        # move to init pos
+        start = -0.5
+        stop = 0.5
+        step = 0.001
+        self.move_absolute(-0.6,0,0)
+        self.line(1,-0.6,start,step)
+
+        # measurement loop
+        for i in range(start,stop,step):
+            self.move_absolute(i,0,0)
+            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+            currentMeas = float(currentMeas.strip())
+            p.append(currentMeas)
+        
+        self.goHome()
+        return p
+    
+    # USING MAX RESOLUTION TO MINIMIZE CHANCES OF REPEATS IN POWER MAXIMUM 
+    def center(self) -> list:
+        hp, vp = [],  []
+        self.resetInstruments()
+        # Define movement parameters
+        left = -0.01
+        right = 0.01
+        down = -0.01
+        up = 0.01
+        step = 0.001
+        self.goHome()
+        # Vertical profile measurement
+        self.move_absolute(0,down,0)
+        for i in range(down,up,step):
+            self.move_absolute(0,i,0)
+            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,MAX')
+            currentMeas = float(currentMeas.strip())
+            vp.append(currentMeas)
+        self.goHome()
+        # Horizontal axis measurement
+        self.move_absolute(left,0,0)
+        for i in range(left,right,step):
+            self.move_absolute(i,0,0)
+            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,MAX')
+            currentMeas = float(currentMeas.strip())
+            hp.append(currentMeas)
+        # identifying center + move to center
+        hMax = max(hp)
+        hMaxInd = hp.index(hMax)
+        vMax = max(vp)
+        vMaxInd = vp.index(vMax)
+        centerCoords = [left + (hMaxInd - 1)*step, down + (vMaxInd - 1)*step]
+        self.move_absolute(centerCoords[0],0,0)
+        self.move_absolute(0,centerCoords[1],0)
+        return centerCoords
+
+    def edges(self,
+            left: float, 
+            right: float,
+            up: float, 
+            down: float) -> dict:
+        powerOuts = {}
+        """left = str(left)
+        right = str(right)
+        up = str(up)
+        down = str(down)"""
+        epsilon = 0.01
+        self.goHome()
+        center_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pcenter'] = center_current
+        self.move_absolute(left-epsilon,0,0)
+        # left edge
+        self.move_absolute(left,0,0)
+        left_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pleft'] = left_current
+        # right edge
+        self.move_absolute(right,0,0)
+        right_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pright'] = right_current
+        # recenter
+        self.goHome()
+        self.move_absolute(0,down - epsilon,0)
+        # down edge
+        self.move_absolute(0,down,0)
+        down_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pdown'] = down_current
+        # upper edge
+        self.move_absolute(0,up,0)
+        up_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pup'] = up_current
+        # center2
+        self.goHome()
+        center2_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        powerOuts['pcenter2'] = center2_current
+        return powerOuts
+
+
+        
+
+
+        
+
+        
+
+        
+        
+        
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+        
+
