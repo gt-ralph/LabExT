@@ -3,6 +3,7 @@ from LabExT.Movement.config import Axis
 from LabExT.Movement.Stage import Stage, StageError, assert_stage_connected, assert_driver_loaded
 from LabExT.Utils import get_configuration_file_path, try_to_lift_window
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
+import numpy as np
 import time
 
 #!/usr/bin/env python3
@@ -199,9 +200,15 @@ class DMD(Stage):
             resp = self.motors.query(f'3MD?') 
             while resp[0] == '0':
                 resp = self.motors.query(f'3MD?')
-        return None     
+        return None
     
-    
+    def move_absolute_by_axis(self, axis, pos):
+        self.motors.write(f'{axis}PA{pos}')
+        resp = self.motors.query(f'{axis}MD?')
+        while resp[0] == '0':
+            resp = self.motors.query(f'{axis}MD?')
+        return None
+
     def goHome(self) -> list:
         # Defining home
         self.motors.write(f'1DH0')
@@ -252,7 +259,6 @@ class DMD(Stage):
         step = 0.001
         self.move_absolute(-0.6,0,0)
         self.line(1,-0.6,start,step)
-
         # measurement loop
         for i in range(start,stop,step):
             self.move_absolute(i,0,0)
@@ -305,10 +311,6 @@ class DMD(Stage):
             up: float, 
             down: float) -> dict:
         powerOuts = {}
-        """left = str(left)
-        right = str(right)
-        up = str(up)
-        down = str(down)"""
         epsilon = 0.01
         self.goHome()
         center_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
@@ -339,34 +341,81 @@ class DMD(Stage):
         powerOuts['pcenter2'] = center2_current
         return powerOuts
 
+    def fiber_sweep(self) -> np.ndarray:
+        self.resetInstruments()
+        left = -0.03
+        right = 0.03
+        up = 0.03
+        down = -0.03
+        step = 0.003
+        dim = len(range(left,right,step))
+        dat = np.empty((dim,dim))
+        p = dim
+        q = 1
+        for i in range(down,up,step):
+            if i == down:
+                self.move_absolute_by_axis(2,down-2*step)
+                self.line(2,down-2*step,down,0.001)
+            self.move_absolute_by_axis(2,i)
+            for j in range(left,right,step):
+                if j == left:
+                    self.move_absolute_by_axis(1,left-2*step)
+                    self.line(1,left-2*step,left,0.001)
+                self.move_absolute_by_axis(1,j)
+                x = self.motors.query(f'1TP?')
+                y = self.motors.query(f'2TP?')
+                pow = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+                dat[q][p] = [j,i,x,y,pow]
+                q += 1
+            q = 1
+            p -= 1
+        return dat
+                
+
+
+
+        """left = -0.01
+        right = 0.01
+        down = -0.01
+        up = 0.01
+        step = 0.001
+
+        def initializeAxis(self, axis) -> bool:
+            self.motors.write(f'{axis}PA0')
+            resp = self.motors.query(f'{axis}MD?')
+            while resp[0] == '0':
+                resp = self.motors.query(f'{axis}MD?')
+            return True
+        
+        def measureAxis(self, 
+                    axis: float,
+                    start: float = 0, 
+                    stop: float = 0,
+                    step: float = 0.001) -> list:
+            profile = []
+            positions = range(start, stop, step)
+            self.move_absolute_by_axis(axis, start - 2 * step)
+            self.move_absolute_by_axis(axis, start - step)
+            for pos in positions:
+                self.move_absolute_by_axis(axis, pos)
+                p = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+                profile.append(p)
+            return profile
+        
+        initializeAxis(1)
+        initializeAxis(2)
+        vp = measureAxis(2,down,up,step)
+        self.move_absolute_by_axis(2,0)
+        hp = measureAxis(1,left,right,step)
+        self.move_absolute_by_axis(1,0)"""
+
+
+
+
 
         
 
 
         
-
-        
-
-        
-        
-        
-
-
-
-
-
-
-        
-
-
-
-
-
-
-
-
-
-
-
         
 
