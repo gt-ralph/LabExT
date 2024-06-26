@@ -242,12 +242,12 @@ class DMD(Stage):
         self.motors.write(f'1DH0')
         self.motors.write(f'2DH0')
         self.motors.write(f'3DH0')
-        # Initial current (or power?) measurement
-        currentInit = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+        # Initial VOLTage (or power?) measurement
+        VOLTageInit = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
         #voltageInit = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
-        currentInit = float(currentInit.strip())
+        VOLTageInit = float(VOLTageInit.strip())
         #voltageInit = float(voltageInit.strip())
-        #powerInit = currentInit * voltageInit
+        #powerInit = VOLTageInit * voltageInit
         x = self.motors.query('1TP')
         y = self.motors.query('2TP')
         z = self.motors.query('3TP')
@@ -262,9 +262,9 @@ class DMD(Stage):
         # measurement loop
         for i in range(start,stop,step):
             self.move_absolute(i,0,0)
-            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-            currentMeas = float(currentMeas.strip())
-            p.append(currentMeas)
+            VOLTageMeas = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+            VOLTageMeas = float(VOLTageMeas.strip())
+            p.append(VOLTageMeas)
         
         self.goHome()
         return p
@@ -284,17 +284,17 @@ class DMD(Stage):
         self.move_absolute(0,down,0)
         for i in range(down,up,step):
             self.move_absolute(0,i,0)
-            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,MAX')
-            currentMeas = float(currentMeas.strip())
-            vp.append(currentMeas)
+            VOLTageMeas = self.multi.query('MEASure:VOLTage:DC? DEF,MAX')
+            VOLTageMeas = float(VOLTageMeas.strip())
+            vp.append(VOLTageMeas)
         self.goHome()
         # Horizontal axis measurement
         self.move_absolute(left,0,0)
         for i in range(left,right,step):
             self.move_absolute(i,0,0)
-            currentMeas = self.multi.query('MEASure:CURRent:DC? DEF,MAX')
-            currentMeas = float(currentMeas.strip())
-            hp.append(currentMeas)
+            VOLTageMeas = self.multi.query('MEASure:VOLTage:DC? DEF,MAX')
+            VOLTageMeas = float(VOLTageMeas.strip())
+            hp.append(VOLTageMeas)
         # identifying center + move to center
         hMax = max(hp)
         hMaxInd = hp.index(hMax)
@@ -313,32 +313,32 @@ class DMD(Stage):
         powerOuts = {}
         epsilon = 0.01
         self.goHome()
-        center_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pcenter'] = center_current
+        center_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pcenter'] = center_VOLTage
         self.move_absolute(left-epsilon,0,0)
         # left edge
         self.move_absolute(left,0,0)
-        left_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pleft'] = left_current
+        left_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pleft'] = left_VOLTage
         # right edge
         self.move_absolute(right,0,0)
-        right_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pright'] = right_current
+        right_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pright'] = right_VOLTage
         # recenter
         self.goHome()
         self.move_absolute(0,down - epsilon,0)
         # down edge
         self.move_absolute(0,down,0)
-        down_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pdown'] = down_current
+        down_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pdown'] = down_VOLTage
         # upper edge
         self.move_absolute(0,up,0)
-        up_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pup'] = up_current
+        up_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pup'] = up_VOLTage
         # center2
         self.goHome()
-        center2_current = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
-        powerOuts['pcenter2'] = center2_current
+        center2_VOLTage = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
+        powerOuts['pcenter2'] = center2_VOLTage
         return powerOuts
 
     def fiber_sweep(self) -> np.ndarray:
@@ -364,12 +364,14 @@ class DMD(Stage):
                 self.move_absolute_by_axis(1,j)
                 x = self.motors.query(f'1TP?')
                 y = self.motors.query(f'2TP?')
-                pow = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+                pow = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
                 dat[q][p] = [j,i,x,y,pow]
                 q += 1
             q = 1
             p -= 1
         return dat
+    
+    
                 
 
 
@@ -398,7 +400,7 @@ class DMD(Stage):
             self.move_absolute_by_axis(axis, start - step)
             for pos in positions:
                 self.move_absolute_by_axis(axis, pos)
-                p = self.multi.query('MEASure:CURRent:DC? DEF,DEF')
+                p = self.multi.query('MEASure:VOLTage:DC? DEF,DEF')
                 profile.append(p)
             return profile
         
