@@ -5,6 +5,7 @@ from LabExT.Utils import get_configuration_file_path, try_to_lift_window
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
 import numpy as np
 import time
+import math
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -371,6 +372,22 @@ class DMD(Stage):
             p -= 1
         return dat
     
+    def powerCalc_in_mW(self,
+            voltList: list,
+            lossRatio: float = 0.2,
+            responsivity: float = 0.45) -> list:
+        # in mV
+        p = []
+        for voltage in voltList:
+            photoCurrent = voltage/200 # mA
+            power = photoCurrent/responsivity
+            p.append(power)
+        return p
+    
+    def powerConV_mW_to_dBm(self,
+            mW_pow: float):
+        return 10*math.log10(mW_pow)
+            
     
                 
 
