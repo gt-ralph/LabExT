@@ -37,12 +37,10 @@ class DMD(Stage):
 
     @classmethod
     def find_stage_addresses(cls):
-        """return [
+        return [
             'tcp:192.168.0.42:1234',
-            'tcp:192.168.0.123:7894'
-        ]"""
-        pass
-
+            'tcp:192.168.0.123:7894']
+        
     @classmethod
     def load_driver(cls):
         pass
