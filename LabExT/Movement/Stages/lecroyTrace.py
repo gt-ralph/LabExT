@@ -4,6 +4,7 @@ from chardet import detect
 import sys
 from matplotlib import pyplot as plt
 import struct
+import numpy as np
 
 rm = pyvisa.ResourceManager()
 scope1 = rm.open_resource('TCPIP0::ts404-17::inst0::INSTR')
@@ -65,6 +66,15 @@ def trace():
 traceOut = trace()
 inspectOut = inspect()
 
+saveable = np.array(inspectOut)
+np.save('traceData',saveable)
+
+# METADATA:
+# power: -8 dbM
+# frequency = 10 MHz
+
+
+"""
 plt.plot(inspectOut)
 plt.plot(traceOut)
 plt.show()
@@ -72,7 +82,7 @@ plt.show()
 
 
 
-"""
+
 
 THIS DOESNT WORK
 #print(scope1.query('*IDN?').strip())
