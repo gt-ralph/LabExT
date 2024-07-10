@@ -5,11 +5,11 @@ import sys
 from matplotlib import pyplot as plt
 import struct
 import numpy as np
+import time
 
 rm = pyvisa.ResourceManager()
 scope1 = rm.open_resource('TCPIP0::ts404-17::inst0::INSTR')
 scope1.write(f'COMM_FORMAT DEF9,BYTE,BIN')
-
 format = scope1.query(f'COMM_FORMAT?').strip()
 #print(format)
 
@@ -62,28 +62,42 @@ def trace():
     #plt.show()
     return decoded_values[184:]
 
+def minimal_trace():
+    scope1.write(f'C4:WAVEFORM?')
+    data = scope1.read_raw()
+    return data
 
-traceOut = trace()
-inspectOut = inspect()
+#traceOut = trace()
+#inspectOut = inspect()
 
-saveable = np.array(inspectOut)
-np.save('traceData',saveable)
+#saveable = np.array(inspectOut)
+#np.save('traceData',saveable)
 
 # METADATA:
 # power: -8 dbM
 # frequency = 10 MHz
 
 
-"""
-plt.plot(inspectOut)
-plt.plot(traceOut)
+#plt.plot(inspectOut)
+#plt.plot(traceOut)
+#plt.show()
+trace()
+times = []
+for count in range(200):
+    startTime = time.time()
+    x = minimal_trace()
+    endTime = time.time()
+    diff = endTime - startTime
+    times.append(diff)    
+
+plt.plot(times)
+avgTime = np.mean(times)
+plt.axhline(y = avgTime,linestyle='--',color='red')
 plt.show()
 
-
-
-
-
-
+print(avgTime*1000)
+plt.savefig('traceTime_avg10ms')
+"""
 THIS DOESNT WORK
 #print(scope1.query('*IDN?').strip())
 scope1.write(f'C4:WAVEFORM?')
