@@ -11,6 +11,7 @@ rm = pyvisa.ResourceManager()
 scope1 = rm.open_resource('TCPIP0::ts404-17::inst0::INSTR')
 scope1.write(f'COMM_FORMAT DEF9,BYTE,BIN')
 format = scope1.query(f'COMM_FORMAT?').strip()
+#scope1.query(f'HORIZ_INTERVAL?')
 #print(format)
 
 
@@ -81,23 +82,57 @@ def minimal_trace():
 #plt.plot(inspectOut)
 #plt.plot(traceOut)
 #plt.show()
-trace()
+#trace()
+
+
 times = []
-for count in range(200):
+for count in range(100):
     startTime = time.time()
     x = minimal_trace()
     endTime = time.time()
-    diff = endTime - startTime
-    times.append(diff)    
+    diff = (endTime - startTime)*1000
+    times.append(diff)   
 
-plt.plot(times)
+print(len(times)) 
+
+"""avgTimes = []
+for count in range(100):
+    starTime = time.time()
+    avg = scope1.query('C4:PAVA? MEAN')
+    #scope1.write('C4:PADL MEAN')
+    endTime = time.time()
+    diff = (endTime - startTime)*1000
+    avgTimes.append(diff)
+
+"""
+
+startTime = time.time()
+avg = scope1.query('C4:PAVA? MEAN')
+endTime = time.time()
+print((endTime-startTime)*1000)
+plt.scatter(range(len(times)),times)
+#plt.scatter(range(len(avgTimes)),avgTimes)
 avgTime = np.mean(times)
 plt.axhline(y = avgTime,linestyle='--',color='red')
+plt.xlabel('Trace Count')
+plt.ylabel('Trace Acquisition Time (ms)')
 plt.show()
 
 print(avgTime*1000)
-plt.savefig('traceTime_avg10ms')
+#plt.savefig('traceTime_avg10ms')
+
+scope1.close()
+
+
+
 """
+
+
+
+
+
+
+
 THIS DOESNT WORK
 #print(scope1.query('*IDN?').strip())
 scope1.write(f'C4:WAVEFORM?')
