@@ -15,22 +15,5 @@
         "OSA" :
         [
             {"visa": "None", "class": "OpticalSpectrumAnalyzerSimulator", "channels": []}
-        ],
-	"Multimeter" :
-	[
-		{"visa": "GPIB0::21:INSTR", "class": "MultimeterAgilent34401A", "channels": [1 ,2 ,3, 4] }
-	],
-	"Motors" :
-	[
-		{visa" : "GPIB0::10::INSTR", "class": "MotorsNewportESP300", "channels": [1, 2, 3, 4]}
-	],
-	"Attenuator" :
-	[
-		{"visa: "GPIB0::27::INSTR", "class": "AttenuatorExfoFVA3100", "channels": [1, 2, 3, 4]}
-	],
-	"Oscilloscope" :
-	[
-		{"visa": "TCPIP0::ts404-17::inst0::INSTR", "class": "OscilloscopeLeCroyWaveMaster830Zi", "channels": [1, 2, 3, 4]}
-	]
-    }
+        ]
 }
