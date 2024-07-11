@@ -1,6 +1,6 @@
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 
-class MultimeterAgilent34401A(Instrument):
+class MotorsNewportESP300(Instrument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
