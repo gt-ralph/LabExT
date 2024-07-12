@@ -1,15 +1,11 @@
-from LabExT.Instruments.InstrumentAPI import Instrument
+from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 
-class MultimeterAgilent34401A(Instrument):
+class MotorsNewportESP300(Instrument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def open(self):
         super().open()
-<<<<<<< HEAD
-        self._inst.query("*IDN?")
-=======
->>>>>>> e99730ba270f226263cb90c891d25d94a1bae6cc
         """
         self._inst.read_termination = '\r\n'
 
@@ -17,12 +13,5 @@ class MultimeterAgilent34401A(Instrument):
         ready = self._inst.query(" ")
 
         if authentication != 'AUTHENTICATE CRAM-MD5.' or ready != 'ready':
-<<<<<<< HEAD
-            raise InstrumentException('Authentication failed')"""
-    
-    def get_voltage_reading(self):
-        pass
-=======
             raise InstrumentException('Authentication failed')
         """
->>>>>>> e99730ba270f226263cb90c891d25d94a1bae6cc
