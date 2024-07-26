@@ -74,16 +74,28 @@ class OpticalVectorAnalyzer(Instrument):
         vi_path = os.path.join(os.path.dirname(__file__), 'LabViewVIs', 'AcquireSingleScan.vi')
         vi = self.labview_app.GetVIReference(vi_path)
 
-        wl_range_dict = {
-            '0.63': 0,
-            '1.27': 1,
-            '2.54': 2,
-            '5.09': 3,
-            '10.22': 4,
-            '20.58': 5,
-            '41.72': 6,
-            '85.78': 7
-        }
+        if center_wavelength > 1400: # Cband
+            wl_range_dict = {
+                '0.63': 0,
+                '1.27': 1,
+                '2.54': 2,
+                '5.09': 3,
+                '10.22': 4,
+                '20.58': 5,
+                '41.72': 6,
+                '85.78': 7
+            }
+        else: #Oband
+            wl_range_dict = {
+                '0.88': 0,
+                '1.76': 1,
+                '3.53': 2,
+                '7.08': 3,
+                '14.25': 4,
+                '28.82': 5,
+                '58.97': 6
+            }
+
 
         plot_data_dict = {
             'INSERTION_LOSS' : 0,

@@ -1,7 +1,7 @@
 from LabExT.Measurements.MeasAPI import *
 import pandas as pd
 
-class Luna_sweep(Measurement):
+class LUNA_sweep_Oband(Measurement):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)  # calling parent constructor
 
@@ -12,9 +12,9 @@ class Luna_sweep(Measurement):
     @staticmethod
     def get_default_parameter():
         return {
-            'center wavelength': MeasParamFloat(value=1550.0, unit='nm'),
+            'center wavelength': MeasParamFloat(value=1298.0, unit='nm'),
             'wavelength range': MeasParamList(
-                options = ['0.63', '1.27', '2.54', '5.09', '10.22', '20.58', '41.72', '85.78'],
+                options = ['0.88', '1.76', '3.53', '7.08', '14.25', '28.82', '58.97'],
                 unit = 'nm'
             ),
             'Plot Measurement Type': MeasParamList(
