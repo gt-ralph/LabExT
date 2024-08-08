@@ -1,7 +1,7 @@
 from LabExT.Measurements.MeasAPI import *
 import pandas as pd
 
-class LUNA_sweep_Oband(Measurement):
+class LUNA_OFDR(Measurement):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)  # calling parent constructor
 
@@ -22,10 +22,7 @@ class LUNA_sweep_Oband(Measurement):
             ),
             'DUT L': MeasParamFloat(value=0.0, unit='m'),
             'save_all_data': MeasParamBool(value=False),
-            'filepath': MeasParamString(value='C:\\Users\\Luna\\Documents\\test.txt'),
-            'Measurement Type': MeasParamList(
-                options= ["Transmission", "Reflection"]
-            )
+            'filepath': MeasParamString(value='C:\\Users\\Luna\\Documents\\test.txt')
         }
     
     @staticmethod
@@ -42,7 +39,6 @@ class LUNA_sweep_Oband(Measurement):
         save_all_data = parameters.get('save_all_data').value
         filepath = parameters.get('filepath').value
         DUT_L = parameters.get('DUT L').value
-        meas_type = parameters.get('Measurement Type').value
 
         self.logger.debug("Starting Luna sweep measurement")
 
@@ -53,7 +49,6 @@ class LUNA_sweep_Oband(Measurement):
             plot_data_type = plot_data_type,
             save_all_data = save_all_data,
             filepath = filepath,
-            meas_type = meas_type
         )
 
         self.logger.debug("Finished Luna sweep measurement")

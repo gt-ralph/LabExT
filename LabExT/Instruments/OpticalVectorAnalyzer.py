@@ -57,7 +57,7 @@ class OpticalVectorAnalyzer(Instrument):
             self.logger.debug("Successfully connected to OVA")
             return 
 
-    def grab_data(self, dut_L: float = None, plot_data_type: str = "INSERTION_LOSS", center_wavelength: float = 1550.00, wl_range: float = 2.54, save_all_data: bool = False, filepath: str = 'C:\\Users\\Luna\\Documents\\test.txt'):
+    def grab_data(self, dut_L: float = None, plot_data_type: str = "INSERTION_LOSS", center_wavelength: float = 1550.00, wl_range: float = 2.54, save_all_data: bool = False, filepath: str = 'C:\\Users\\Luna\\Documents\\test.txt', meas_type: str = "Transmission"):
         """
         Acquire measurement data from the OVA.
 
@@ -130,6 +130,10 @@ class OpticalVectorAnalyzer(Instrument):
         vi.SetControlValue("Output Spreadsheet File Path", filepath)
         vi.SetControlValue("Graph Data to Output", [True] * 20)
         vi.SetControlValue("Filter?", False)
+        if meas_type == "Transmission":
+            vi.SetControlValue("Meas Type", 1) # 0 for reflection, 1 for transmission
+        else:
+            vi.SetControlValue("Meas Type", 0) 
 
         self.logger.debug("Running Luna sweep measurement")
 
