@@ -143,8 +143,6 @@ class OpticalVectorAnalyzer(Instrument):
         result = np.array(vi.GetControlValue("Graph"))
         new_dut_L = vi.GetControlValue("Length of DUT (m)")
 
-        # self.save_data()
-
         return result, new_dut_L
 
     def close(self):
