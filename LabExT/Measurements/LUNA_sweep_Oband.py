@@ -46,6 +46,10 @@ class LUNA_sweep_Oband(Measurement):
 
         self.logger.debug("Starting Luna sweep measurement")
 
+        filepath += f"\\{DUT_L:.1f}.txt"
+        f = open(filepath, "w")
+        f.close()
+
         result, new_dut_L = self.ova.grab_data(
             dut_L = DUT_L,
             center_wavelength = center_wavelength,
