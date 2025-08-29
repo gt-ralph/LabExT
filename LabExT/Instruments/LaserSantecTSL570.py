@@ -63,8 +63,8 @@ class LaserSantecTSL570(Instrument):
         #     self.trigger_at_open = self.query("trig:conf?")
 
     def close(self):
-        if self._open:
-            self.command("trig:conf " + self.trigger_at_open)
+        # if self._open:
+        #     self.command("trig:conf " + self.trigger_at_open)
         super().close()
 
     def __enter__(self):
@@ -94,12 +94,13 @@ class LaserSantecTSL570(Instrument):
         """
         we extend the IDN to also get the chosen slot identification string
         """
-        mf_idn = super().idn()
-        if self.channel is not None:
-            slot_idn = self.query_channel("slot", ":idn?").strip()
-            return "Mainframe: " + str(mf_idn) + " Slot" + str(self.channel) + ": " + str(slot_idn)
-        else:
-            return mf_idn
+        # mf_idn = super().idn()
+        # if self.channel is not None:
+        #     slot_idn = self.query_channel("slot", ":idn?").strip()
+        #     return "Mainframe: " + str(mf_idn) + " Slot" + str(self.channel) + ": " + str(slot_idn)
+        # else:
+        #     return mf_idn
+        return "santec"
 
     @property
     def min_lambda(self):
@@ -125,39 +126,42 @@ class LaserSantecTSL570(Instrument):
     #   swept wavelength settings
     #
     def triggered_sweep_wl_setup(self, start_nm, stop_nm, step_pm, sweep_speed_nm_per_s=5, nbr_cycles=1):
-        self.command('trig0:outp SWST')
-        # self.command('sour:chan:wav:swe:llog 0')
-        self.command_channel('sour', ':wav:swe:mode cont')
-        self.command_channel('sour', ':wav:swe:star ' + str(start_nm) + 'nm')
-        self.command_channel('sour', ':wav:swe:stop ' + str(stop_nm) + 'nm')
-        self.command_channel('sour', ':wav:swe:step ' + str(step_pm) + 'pm')
-        self.command_channel('sour', ':wav:swe:spe ' + str(sweep_speed_nm_per_s) + 'nm/s')
-        self.command_channel('sour', f':wav:swe:cycl {nbr_cycles}')
 
-        self.command_channel('sour', ':wav:swe:llog 0')
+        self.command('trig0:outp 2')
+        self.command_channel('sour',':WAVelength:SWEep:MOD 1')
+        self.command('WAVelength:SWEep:STARt ' + str(start_nm) + 'nm')
+        self.command(':WAVelength:SWEep:STOP ' + str(stop_nm) + 'nm')
+        self.command(':WAVelength:SWEep:SPEed ' + str(sweep_speed_nm_per_s))
+        # self.command_channel('sour', ':wav:swe:step ' + str(step_pm) + 'pm')
+        # self.command_channel('sour', f':wav:swe:cycl {nbr_cycles}')
+        self.command(':trig:outp:act 0')
+
+        # self.command_channel('sour', ':wav:swe:llog 0')
+        # print('Sweep setup')
 
         # check if sweep parameters are consistenteep_wl_setup
-        r = self.request_channel('sour', ':wav:swe:chec?')
-        if r[0:4] != '0,OK':
-            raise InstrumentException('Sweep parameters incorrectly set! Error message: ' + str(r))
+        # r = self.request_channel('sour', ':wav:swe:chec?')
+        # if r[0:4] != '0,OK':
+        #     raise InstrumentException('Sweep parameters incorrectly set! Error message: ' + str(r))
 
         # check if chosen laser power can be hold over whole sweeping range
-        pmax_W = float(self.request_channel("sour", ":wav:swe:pmax? " + str(start_nm) + "nm," + str(stop_nm) + "nm"))
-        pmax_dBm = 10 * log10(pmax_W * 1.e3)
-        if "dBm" in self.unit:
-            instr_p_dBm = self.power
-        else:
-            instr_p_dBm = 10 * log10(self.power * 1.e3)
-        if instr_p_dBm > pmax_dBm:
-            raise InstrumentException(("Laser power larger than maximum allowed over sweeping range! " +
-                                       "Maximum in sweep range from {:.2f} nm to {:.2f} nm is {:.2f} dBm and the " +
-                                       "laser is set to {:.2f} dBm.").format(
-                start_nm, stop_nm, pmax_dBm, instr_p_dBm
-            ))
+        # pmax_W = float(self.request_channel("sour", ":wav:swe:pmax? " + str(start_nm) + "nm," + str(stop_nm) + "nm"))
+        # pmax_dBm = 10 * log10(pmax_W * 1.e3)
+        # if "dBm" in self.unit:
+        #     instr_p_dBm = self.power
+        # else:
+        #     instr_p_dBm = 10 * log10(self.power * 1.e3)
+        # if instr_p_dBm > pmax_dBm:
+        #     raise InstrumentException(("Laser power larger than maximum allowed over sweeping range! " +
+        #                                "Maximum in sweep range from {:.2f} nm to {:.2f} nm is {:.2f} dBm and the " +
+        #                                "laser is set to {:.2f} dBm.").format(
+        #         start_nm, stop_nm, pmax_dBm, instr_p_dBm
+        #     ))
 
         sweep_time = (stop_nm-start_nm)/sweep_speed_nm_per_s
 
         self.sweep_configured = True
+        print('Sweep configured, estimated time for one sweep cycle is', sweep_time, 's')
 
         return sweep_time
 

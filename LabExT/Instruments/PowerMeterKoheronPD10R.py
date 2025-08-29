@@ -15,7 +15,15 @@ class PowerMeterKoheronPD10R(Instrument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.lj = None
-        self.lj_port = self._kwargs.get("lj_port", None)
+        self.lj_ports = self._kwargs.get("lj_ports", None)
+
+        match self.channel:
+            case 0:
+                self.lj_port = "AIN0"
+            case 1:
+                self.lj_port = "AIN1"
+            case _ :
+                self.lj_port = "AIN0"
 
 
     @Instrument._open.getter  # weird way to override the parent's class property getter
@@ -36,11 +44,22 @@ class PowerMeterKoheronPD10R(Instrument):
     
     @property
     def power(self):
+        self.lj_port = self.update_lj_port(self.channel)
         return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
 
     def fetch_power(self):
+        self.lj_port = self.update_lj_port(self.channel)
         return self.voltage_to_dBm(self.lj.read_from_port(self.lj_port))
     
+    def update_lj_port(self, channel):
+        match channel:
+            case "0":
+                return "AIN0"
+            case "1":
+                return "AIN1"
+            case _ :
+                return "Not Valid"
+
     def get_instrument_parameter(self):
         return {'idn': self.idn()}
     
