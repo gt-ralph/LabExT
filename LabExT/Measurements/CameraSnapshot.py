@@ -290,14 +290,19 @@ class CameraSnapshot(Measurement):
             std_counts.append(float(np.std(image)))
             saturated_fractions.append(float(np.count_nonzero(image >= full_scale) / image.size))
 
+        # data['values'] must hold numeric series only: LabExT plots every one of them, and
+        # PlotControl runs np.isfinite over the y data, which raises on strings. The file names and
+        # timestamps are metadata about the capture rather than measured values, so they belong
+        # alongside the other settings.
         data['values']['frame index'] = frame_indices
-        data['values']['timestamp utc'] = timestamps
-        data['values']['image file'] = file_names
         data['values']['mean counts'] = mean_counts
         data['values']['min counts'] = min_counts
         data['values']['max counts'] = max_counts
         data['values']['std counts'] = std_counts
         data['values']['saturated pixel fraction'] = saturated_fractions
+
+        data['measurement settings']['image files'] = file_names
+        data['measurement settings']['frame timestamps utc'] = timestamps
 
         data['measurement settings']['image shape'] = [int(v) for v in image.shape]
         data['measurement settings']['image dtype'] = str(image.dtype)
