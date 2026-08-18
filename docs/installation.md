@@ -46,6 +46,38 @@ pip install -e
     - Programming Interaces: Windows SDK and Doc. for Scientific Cameras
 2. Follow [these build instructons](https://github.com/Thorlabs/Camera_Examples/tree/main/Python)
 
+### Allied Vision Alvium Cameras
+1. Install [Vimba X](https://www.alliedvision.com/en/products/software/vimba-x-sdk/), which brings
+   the USB3/GigE transport layers and the camera driver with it.
+2. Install the `vmbpy` wheel that ships inside that installation. Take the one with the platform
+   tag (`win_amd64`), it bundles the VmbC libraries:
+```
+pip install "C:\Program Files\Allied Vision\Vimba X\api\python\vmbpy-1.1.1-py3-none-win_amd64.whl"
+```
+   The version in the filename tracks your Vimba X release, so check the folder rather than
+   copying the command verbatim. Equivalently, add the `vmbpy` flag to the pip install
+   (```pip install -e .[vmbpy]```) if you want it pulled from PyPI instead.
+3. Add a `Camera` entry to your `instruments.config` naming the `CameraAlliedVisionAlvium` class.
+   Give it the camera ID from the Vimba X Viewer (or from
+   ```"C:\Program Files\Allied Vision\Vimba X\bin\ListCameras_VmbC.exe"```) so the right camera is
+   picked when more than one is attached. See `configs/happi_setup_config.config` for an example.
+4. Open the live preview with **View → Camera View** (or `Ctrl+K`, or the button in the "Couple
+   Light to SiP Chip" panel) to set exposure and gain against a live image while aligning. Closing
+   that window stops the stream but leaves the camera connected.
+5. To keep a picture, set a folder and a filename prefix under "Save Images", tick **PNG**, **TIFF**
+   or both, and press **Snap and Save**. Files are named `<prefix>_000`, `<prefix>_001`, ... and an
+   existing index is never overwritten. TIFF holds the camera's raw counts at the full bit depth of
+   the pixel format; PNG holds the 8-bit image exactly as displayed, percentile stretch included,
+   so it is a picture of the data rather than the data itself. Ticking both writes one of each
+   under the same index.
+6. Once the image looks right, press **Use for CameraSnapshot** to make the current exposure, gain,
+   pixel format and ROI the starting values of the `CameraSnapshot` measurement. The other
+   measurement settings (number of frames, output directory, file format) are left alone.
+
+!!! note
+    Only one program can hold a camera at a time. If LabExT reports that the camera is already in
+    use, close the Vimba X Viewer.
+
 ### OVA Control
 1. Install LabView 32-bit. IT IS IMPERATIVE YOU USE 32 bit.
 2. Get a student license from Tech 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from LabExT.Utils import get_author_list, try_to_lift_window
 from LabExT.View.AddonSettingsDialog import AddonSettingsDialog
+from LabExT.View.CameraViewWindow import CameraViewWindow
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
 from LabExT.View.MeasurementControlSettings import MeasurementControlSettingsView
 from LabExT.View.ExperimentWizard import ExperimentWizard
@@ -83,6 +84,8 @@ class MListener:
         self.calibration_setup_toplevel = None
         self.calibration_restore_toplevel = None
         self.import_chip_wizard_toplevel = None
+        # the camera view tracks its window on the experiment manager instead of here, see
+        # client_camera_view
 
     def client_new_experiment(self):
         """Called when user wants to start new Experiment. Calls the ExperimentWizard."""
@@ -300,6 +303,19 @@ class MListener:
         self.logger.debug("Opening new live viewer window.")
         lv = LiveViewerController(self._root, self._experiment_manager)  # blocking call until all settings are made
         self.live_viewer_toplevel = lv.current_window  # reference to actual toplevel
+
+    def client_camera_view(self):
+        """Called when user wants to open the live camera view."""
+        # The window reference lives on the experiment manager rather than on this listener:
+        # refresh_context_menu() builds a whole new MListener, which would reset a local attribute
+        # to None and let a second camera view open on top of the first.
+        existing = getattr(self._experiment_manager, 'camera_view_window', None)
+        if try_to_lift_window(existing):
+            return
+
+        self.logger.debug("Opening new camera view window.")
+        self._experiment_manager.camera_view_window = CameraViewWindow(
+            self._root, self._experiment_manager)
 
     def client_instrument_connection_debugger(self):
         """opens the instrument connection debugger"""

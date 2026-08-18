@@ -28,6 +28,11 @@ setuptools.setup(
         ],
         'ova': [
             'pywin32'
+        ],
+        # Allied Vision Vimba X Python API, for the Alvium cameras. The wheel ships with the
+        # Vimba X installation, e.g. %VIMBA_X_HOME%/api/python/vmbpy-1.1.1-py3-none-win_amd64.whl
+        'vmbpy': [
+            'vmbpy'
         ]
     },
     classifiers=[

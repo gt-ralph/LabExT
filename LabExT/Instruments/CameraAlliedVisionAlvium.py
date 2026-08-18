@@ -1,0 +1,832 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
+This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
+"""
+
+import contextlib
+import math
+import os
+import threading
+from datetime import datetime, timezone
+
+import numpy as np
+
+from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
+
+# vmbpy is an optional dependency: it ships as a wheel inside the Vimba X installation and loads
+# VmbC.dll at import time. The import is guarded (and catches more than ImportError) because
+# PluginLoader silently drops any module which raises on import, which would make this driver
+# disappear from the instrument list with nothing but a log line to explain it.
+try:
+    from vmbpy import (VmbSystem, AccessMode, FrameStatus, PixelFormat, VmbTimeout)
+
+    VMBPY_AVAILABLE = True
+    VMBPY_IMPORT_ERROR = None
+except Exception as _exc:  # ImportError, OSError (missing VmbC.dll), VmbSystemError, ...
+    VmbSystem = AccessMode = FrameStatus = PixelFormat = None
+    VmbTimeout = Exception
+
+    VMBPY_AVAILABLE = False
+    VMBPY_IMPORT_ERROR = _exc
+
+#: pixel formats which vmbpy knows how to lay out as a numpy array. Packed formats (Mono10p,
+#: Mono12p, Mono12Packed) are not in vmbpy's PIXEL_FORMAT_TO_LAYOUT table and must be converted
+#: before as_numpy_ndarray() will accept them.
+NUMPY_SAFE_FORMATS = ('Mono8', 'Mono10', 'Mono12', 'Mono14', 'Mono16')
+
+#: conversion target used for packed source formats, chosen to preserve all bits
+PACKED_CONVERSION_TARGET = 'Mono16'
+
+DEFAULT_FRAME_TIMEOUT_MS = 5000
+
+
+class CameraAlliedVisionAlvium(Instrument):
+    """
+    ### Allied Vision Alvium camera (USB3 Vision / GigE Vision, via the Vimba X `vmbpy` API)
+
+    Developed and tested against an Alvium 1800 U-130 VSWIR, but nothing here is model specific:
+    all limits are queried from the camera rather than hard-coded, so any GenICam compliant Alvium
+    should work.
+
+    This is not a VISA instrument. `visa_address` is ignored, and the SCPI methods of the parent
+    class are stubbed out.
+
+    Requires the `vmbpy` wheel shipped with Vimba X:
+
+        pip install "C:/Program Files/Allied Vision/Vimba X/api/python/vmbpy-1.1.1-py3-none-win_amd64.whl"
+
+    #### Constructor keyword arguments
+
+    All of these come from the `args` dict of the instruments.config entry and are optional:
+
+    * `camera_id` (str): Vimba camera ID, e.g. `"DEV_1AB22C0B3989"`. Defaults to the first camera
+      found, which is only unambiguous with a single camera attached.
+    * `exposure_time` (float): exposure applied on open, in microseconds.
+    * `gain` (float): gain applied on open, in dB.
+    * `pixel_format` (str): pixel format applied on open, e.g. `"Mono8"` or `"Mono12"`.
+    * `roi` (list): `[width, height, offset_x, offset_y]` applied on open. A 0 means "sensor max".
+    * `timeout_ms` (int): default frame timeout, defaults to 5000.
+    * `throughput_limit` (int): optional `DeviceLinkThroughputLimit` in Bytes/s, for USB bandwidth
+      sharing between multiple cameras.
+
+    #### Example instruments.config entry
+
+    ```
+    "Camera": [
+        {"visa": "None", "class": "CameraAlliedVisionAlvium", "channels": [0],
+         "args": {"camera_id": "DEV_1AB22C0B3989", "pixel_format": "Mono8",
+                  "exposure_time": 10000.0, "gain": 0.0, "roi": [0, 0, 0, 0]}}
+    ]
+    ```
+    """
+
+    def __init__(self, *args, **kwargs):
+        # These must exist before super().__init__() runs: if the parent constructor raises, the
+        # interpreter still calls __del__ -> close(), which reads them.
+        self._stack = None
+        self._vmb = None
+        self._cam = None
+        self._cam_lock = threading.RLock()
+        self._static_info = {}
+        self._last_image = None
+        self._last_meta = {}
+
+        super().__init__(*args, **kwargs)
+
+        self._category = "Camera"
+
+        self._cam_id = self._kwargs.get("camera_id", None)
+        self._timeout_ms = int(self._kwargs.get("timeout_ms", DEFAULT_FRAME_TIMEOUT_MS))
+        self._startup_exposure = self._kwargs.get("exposure_time", None)
+        self._startup_gain = self._kwargs.get("gain", None)
+        self._startup_format = self._kwargs.get("pixel_format", None)
+        self._startup_roi = self._kwargs.get("roi", None)
+        self._throughput_limit = self._kwargs.get("throughput_limit", None)
+
+        self.networked_instrument_properties.extend([
+            'exposure_time',
+            'gain',
+            'pixel_format',
+            'width',
+            'height',
+            'offset_x',
+            'offset_y',
+            'exposure_time_range',
+            'gain_range',
+            'sensor_size',
+            'device_temperature',
+        ])
+
+    #
+    # connection handling
+    #
+
+    @Instrument._open.getter  # weird way to override the parent's class property getter
+    def _open(self):
+        return self._stack is not None and self._cam is not None
+
+    def open(self):
+        """Open the connection to the camera. Does nothing if it is already open.
+
+        vmbpy exposes VmbSystem and Camera as context managers, whereas LabExT wants open()/close().
+        Both of vmbpy's context managers are reference counted and carry no thread affinity, so
+        driving them by hand is supported. An ExitStack is used rather than bare __enter__ calls so
+        that a failure part way through (camera busy, wrong ID) still unwinds whatever was already
+        entered, in the right order.
+        """
+        if not VMBPY_AVAILABLE:
+            raise InstrumentException(
+                "Cannot use " + self.__class__.__name__ + ": the vmbpy module is not importable. "
+                "Install the wheel shipped with Vimba X, e.g. pip install "
+                '"%VIMBA_X_HOME%/api/python/vmbpy-1.1.1-py3-none-win_amd64.whl". '
+                "Original error: " + repr(VMBPY_IMPORT_ERROR))
+
+        with self._cam_lock:
+            if self._open:
+                return
+
+            stack = contextlib.ExitStack()
+            try:
+                vmb = stack.enter_context(VmbSystem.get_instance())
+
+                if self._cam_id:
+                    cam = vmb.get_camera_by_id(self._cam_id)
+                else:
+                    all_cams = vmb.get_all_cameras()
+                    if not all_cams:
+                        raise InstrumentException(
+                            "No Allied Vision camera detected. Check the USB connection and that "
+                            "the Vimba X transport layers are installed.")
+                    cam = all_cams[0]
+
+                # vmbpy hands out one Camera object per physical camera, and its context is
+                # reference counted, so a second driver instance for the same camera shares it
+                # rather than colliding. Only set_access_mode is off limits once the context has
+                # been entered: it is decorated @RaiseIfInsideContext.
+                if not getattr(cam, '_context_entered', False):
+                    cam.set_access_mode(AccessMode.Full)
+                cam = stack.enter_context(cam)
+
+                self._vmb = vmb
+                self._cam = cam
+                self._stack = stack
+
+                self._cache_static_info()
+                self._apply_startup_settings()
+            except Exception as exc:
+                stack.close()  # unwinds the camera first, then VmbSystem
+                self._vmb = None
+                self._cam = None
+                self._stack = None
+                if 'already in use' in str(exc) or 'AccessDenied' in type(exc).__name__:
+                    raise InstrumentException(
+                        "Camera is already in use by another application. Close the Vimba X Viewer "
+                        "(or any other program holding the camera) and try again. Original error: "
+                        + repr(exc)) from exc
+                raise
+
+        self.logger.info("Opened Allied Vision camera %s (%s, SN %s).",
+                         self._static_info.get('camera id'),
+                         self._static_info.get('camera model'),
+                         self._static_info.get('camera serial'))
+
+    def close(self):
+        """Release the camera and shut the Vimba system down. Safe to call more than once, and safe
+        to call on an instance whose open() never ran (the parent class calls it from __del__)."""
+        # getattr rather than attribute access: __del__ can reach this even if __init__ did not
+        # finish, and the lock itself may not exist yet
+        lock = getattr(self, '_cam_lock', None)
+        if lock is None or getattr(self, '_stack', None) is None:
+            return
+
+        # take the lock so that a capture running on another thread finishes before the camera is
+        # pulled out from under it
+        with lock:
+            stack = self._stack
+            if stack is None:
+                return
+
+            try:
+                if self._cam is not None and self._cam.is_streaming():
+                    self._cam.stop_streaming()
+            except Exception as exc:
+                self.logger.debug("Error stopping camera stream during close: %r", exc)
+
+            try:
+                stack.close()
+            except Exception as exc:
+                self.logger.warning("Error closing Allied Vision camera: %r", exc)
+            finally:
+                self._stack = None
+                self._cam = None
+                self._vmb = None
+
+        self.logger.debug("Closed Allied Vision camera %s.", self._static_info.get('camera id'))
+
+    @Instrument.thread_lock.getter  # weird way to override the parent's class property getter
+    def thread_lock(self):
+        return self._cam_lock
+
+    #
+    # internal helpers
+    #
+
+    def _feat(self, name):
+        """Return a GenICam feature by name, raising a sensible error if we are not connected."""
+        if not self._open:
+            raise InstrumentException(
+                "Camera connection is not open. Call open() before accessing camera features.")
+        return self._cam.get_feature_by_name(name)
+
+    def _try_set(self, name, value):
+        """Best effort feature write for optional features: logs instead of raising."""
+        try:
+            self._feat(name).set(value)
+            return True
+        except Exception as exc:
+            self.logger.debug("Optional camera feature %s <- %r failed: %r", name, value, exc)
+            return False
+
+    @staticmethod
+    def _snap_to_increment(value, minimum, maximum, increment):
+        """Clip a value into [minimum, maximum] and snap it onto the feature's increment grid.
+
+        GenICam rejects values which are not on the increment grid, so snapping here turns what
+        would be a VmbFeatureError into a silently reasonable value.
+
+        Snapping goes to the *nearest* step rather than downwards: the increments the camera
+        reports are floats (gain steps by 0.10000000149 dB), so flooring would drop a requested
+        gain of 3.0 dB to 2.9 dB purely through representation error.
+        """
+        value = max(minimum, min(maximum, value))
+        if increment:
+            snapped = minimum + round((value - minimum) / increment) * increment
+            if snapped > maximum:
+                if snapped - maximum < increment / 2.0:
+                    # only overshot through float error; the reported maximum is itself settable
+                    snapped = maximum
+                else:
+                    snapped = minimum + math.floor((maximum - minimum) / increment) * increment
+            value = max(minimum, snapped)
+        return value
+
+    @staticmethod
+    def _frame_to_array(frame, squeeze=True):
+        """Turn a vmbpy frame into a numpy array which owns its memory outright.
+
+        Two things need care here. Packed pixel formats are absent from vmbpy's layout table and
+        have to be converted before they can be viewed as numpy at all. And the array vmbpy hands
+        back is only a view onto the frame's buffer, which it keeps alive by hanging a
+        `{'VmbPy_buffer': ...}` entry off the array's dtype metadata. numpy carries that metadata
+        across a plain copy, so the "copy" would still pin a buffer vmbpy is free to reuse, and
+        numpy.save would refuse to write it. Going through astype with the dtype spelled as a
+        string builds a fresh dtype and leaves the metadata behind.
+
+        Returns:
+            tuple: `(image, source pixel format, delivered pixel format)`
+        """
+        source_format = str(frame.get_pixel_format())
+        if source_format not in NUMPY_SAFE_FORMATS:
+            frame = frame.convert_pixel_format(getattr(PixelFormat, PACKED_CONVERSION_TARGET))
+        delivered_format = str(frame.get_pixel_format())
+
+        image = frame.as_numpy_ndarray()
+        if squeeze and image.ndim == 3 and image.shape[2] == 1:
+            image = image[:, :, 0]
+
+        image = image.astype(image.dtype.str, order='C', copy=True)
+        return image, source_format, delivered_format
+
+    def _cache_static_info(self):
+        """Read everything which cannot change while the camera is open exactly once."""
+        cam = self._cam
+        info = {
+            'camera id': cam.get_id(),
+            'camera model': cam.get_model(),
+            'camera name': cam.get_name(),
+            'camera serial': cam.get_serial(),
+            'camera interface': cam.get_interface_id(),
+            'vmbpy version': str(self._vmb.get_version()),
+        }
+        for key, feature_name in (('sensor width', 'SensorWidth'),
+                                  ('sensor height', 'SensorHeight'),
+                                  ('camera firmware', 'DeviceFirmwareVersion')):
+            try:
+                info[key] = self._feat(feature_name).get()
+            except Exception:
+                info[key] = None
+
+        self._static_info = info
+        # make the identity part of the saved measurement metadata even if the camera happens to be
+        # busy when LabExT collects instrument parameters
+        self.instrument_parameters.update(info)
+
+    def _apply_startup_settings(self):
+        """Put the camera into a known state and apply whatever the config asked for."""
+        # Auto exposure / auto gain silently override anything we write to ExposureTime / Gain.
+        self._try_set('ExposureAuto', 'Off')
+        self._try_set('GainAuto', 'Off')
+        self._try_set('AcquisitionMode', 'SingleFrame')
+
+        if self._throughput_limit is not None:
+            self._try_set('DeviceLinkThroughputLimitMode', 'On')
+            self._try_set('DeviceLinkThroughputLimit', int(self._throughput_limit))
+
+        if self._startup_format:
+            self.pixel_format = self._startup_format
+        if self._startup_roi:
+            self.set_roi(*self._startup_roi)
+        if self._startup_exposure is not None:
+            self.exposure_time = float(self._startup_exposure)
+        if self._startup_gain is not None:
+            self.gain = float(self._startup_gain)
+
+    #
+    # exposure and gain
+    #
+
+    @property
+    def exposure_time(self):
+        """Exposure time in microseconds."""
+        return float(self._feat('ExposureTime').get())
+
+    @exposure_time.setter
+    def exposure_time(self, value):
+        with self._cam_lock:
+            feature = self._feat('ExposureTime')
+            minimum, maximum = feature.get_range()
+            feature.set(self._snap_to_increment(
+                float(value), minimum, maximum, feature.get_increment()))
+
+    @property
+    def exposure_time_range(self):
+        """Settable exposure time range as `[min, max]` in microseconds."""
+        minimum, maximum = self._feat('ExposureTime').get_range()
+        return [float(minimum), float(maximum)]
+
+    @property
+    def gain(self):
+        """Gain in dB."""
+        return float(self._feat('Gain').get())
+
+    @gain.setter
+    def gain(self, value):
+        with self._cam_lock:
+            self._try_set('GainSelector', 'All')
+            feature = self._feat('Gain')
+            minimum, maximum = feature.get_range()
+            feature.set(self._snap_to_increment(
+                float(value), minimum, maximum, feature.get_increment()))
+
+    @property
+    def gain_range(self):
+        """Settable gain range as `[min, max]` in dB."""
+        minimum, maximum = self._feat('Gain').get_range()
+        return [float(minimum), float(maximum)]
+
+    #
+    # pixel format
+    #
+
+    @property
+    def pixel_format(self):
+        """Currently active pixel format, as a string, e.g. `'Mono8'`."""
+        return str(self._cam.get_pixel_format()) if self._open else None
+
+    @pixel_format.setter
+    def pixel_format(self, value):
+        with self._cam_lock:
+            if not self._open:
+                raise InstrumentException("Camera connection is not open.")
+            available = self.available_pixel_formats
+            if str(value) not in available:
+                raise InstrumentException(
+                    "Pixel format '{:s}' is not supported by this camera. Available formats: "
+                    "{:s}".format(str(value), ", ".join(available)))
+            self._cam.set_pixel_format(getattr(PixelFormat, str(value)))
+
+    @property
+    def available_pixel_formats(self):
+        """List of pixel format names this camera supports."""
+        return [str(f) for f in self._cam.get_pixel_formats()]
+
+    #
+    # region of interest
+    #
+
+    @property
+    def width(self):
+        """Width of the acquired image in pixels."""
+        return int(self._feat('Width').get())
+
+    @property
+    def height(self):
+        """Height of the acquired image in pixels."""
+        return int(self._feat('Height').get())
+
+    @property
+    def offset_x(self):
+        """Horizontal offset of the ROI from the left sensor edge, in pixels."""
+        return int(self._feat('OffsetX').get())
+
+    @property
+    def offset_y(self):
+        """Vertical offset of the ROI from the top sensor edge, in pixels."""
+        return int(self._feat('OffsetY').get())
+
+    @property
+    def roi(self):
+        """The current region of interest as `[width, height, offset_x, offset_y]`."""
+        return [self.width, self.height, self.offset_x, self.offset_y]
+
+    @property
+    def sensor_size(self):
+        """Full sensor size as `[width, height]` in pixels."""
+        return [self._static_info.get('sensor width'), self._static_info.get('sensor height')]
+
+    def set_roi(self, width=0, height=0, offset_x=0, offset_y=0):
+        """Set the region of interest. Pass 0 for width or height to use the full sensor.
+
+        GenICam couples the offsets to the sizes: while Width is at its maximum, the settable range
+        of OffsetX is (0, 0). The offsets are therefore zeroed first, then the sizes are applied,
+        then the offsets. All four values are snapped onto their increment grids.
+
+        Returns:
+            list: the resulting ROI as `[width, height, offset_x, offset_y]`
+        """
+        with self._cam_lock:
+            self._try_set('OffsetX', 0)
+            self._try_set('OffsetY', 0)
+
+            for feature_name, value in (('Width', width), ('Height', height)):
+                feature = self._feat(feature_name)
+                minimum, maximum = feature.get_range()
+                target = maximum if not value else int(value)
+                feature.set(int(self._snap_to_increment(
+                    target, minimum, maximum, feature.get_increment())))
+
+            for feature_name, value in (('OffsetX', offset_x), ('OffsetY', offset_y)):
+                if not value:
+                    continue
+                feature = self._feat(feature_name)
+                minimum, maximum = feature.get_range()
+                feature.set(int(self._snap_to_increment(
+                    int(value), minimum, maximum, feature.get_increment())))
+
+        return self.roi
+
+    @property
+    def device_temperature(self):
+        """Mainboard temperature in degrees Celsius, or None if the camera does not report one."""
+        try:
+            self._try_set('DeviceTemperatureSelector', 'Mainboard')
+            return float(self._feat('DeviceTemperature').get())
+        except Exception:
+            return None
+
+    #
+    # continuous streaming
+    #
+    # Used by the live camera view. Single frame acquisition via snap_photo() and streaming are
+    # mutually exclusive: the camera needs a different AcquisitionMode for each, and vmbpy will not
+    # hand out a frame through get_frame() while a stream is running.
+    #
+
+    @property
+    def is_streaming(self):
+        """Whether a continuous acquisition is currently running."""
+        return self._open and self._cam.is_streaming()
+
+    def start_streaming(self, handler, buffer_count=10):
+        """Start a continuous acquisition, delivering frames to `handler` on a vmbpy thread.
+
+        The handler is called as `handler(camera, stream, frame)` and **must** hand the buffer back
+        with `camera.queue_frame(frame)` when it is done, or the acquisition runs out of buffers and
+        stalls. Use `frame_to_array` to get a numpy array out of the frame; the array vmbpy provides
+        directly is only borrowed and must not outlive the callback.
+
+        The handler runs on vmbpy's own thread, so it must not take this instrument's `thread_lock`:
+        a `stop_streaming()` on another thread holds that lock while waiting for the stream to end,
+        which would deadlock.
+
+        Arguments:
+            handler (callable): frame callback, signature `(camera, stream, frame)`
+            buffer_count (int): how many frame buffers to announce. More buffers absorb longer GUI
+                stalls at the cost of memory.
+        """
+        with self._cam_lock:
+            if not self._open:
+                raise InstrumentException(
+                    "Camera connection is not open. Call open() before streaming.")
+            if self._cam.is_streaming():
+                raise InstrumentException(
+                    "Camera is already streaming. Call stop_streaming() first.")
+
+            self._try_set('AcquisitionMode', 'Continuous')
+            self._cam.start_streaming(handler=handler, buffer_count=int(buffer_count))
+
+        self.logger.debug("Started streaming from camera %s.", self._static_info.get('camera id'))
+
+    def stop_streaming(self):
+        """Stop a continuous acquisition. Does nothing if no stream is running."""
+        with self._cam_lock:
+            if not self._open or not self._cam.is_streaming():
+                return
+            self._cam.stop_streaming()
+            self._try_set('AcquisitionMode', 'SingleFrame')
+
+        self.logger.debug("Stopped streaming from camera %s.", self._static_info.get('camera id'))
+
+    @staticmethod
+    def frame_is_complete(frame):
+        """Whether a frame handed to a streaming callback actually carries a usable image.
+
+        Incomplete frames turn up routinely at the start of an acquisition and whenever the link
+        drops data. They must be checked for before any conversion is attempted: their pixel format
+        field reads back as 0, which is not a valid PixelFormat, so even asking what format they are
+        raises.
+        """
+        try:
+            return frame.get_status() == FrameStatus.Complete
+        except Exception:
+            return False
+
+    @staticmethod
+    def frame_pixel_format(frame):
+        """The pixel format a streamed frame was captured in, as a string.
+
+        Reads the frame itself rather than the camera, so it stays correct even if the camera has
+        been reconfigured since, and costs no device access. Only valid for complete frames.
+        """
+        return str(frame.get_pixel_format())
+
+    def frame_to_array(self, frame, squeeze=True):
+        """Convert a vmbpy frame handed to a streaming callback into an owned numpy array.
+
+        Only call this for frames which `frame_is_complete` accepts.
+
+        Returns:
+            numpy.ndarray: the frame, 2D for monochrome data when `squeeze` is set
+        """
+        image, _, _ = self._frame_to_array(frame, squeeze=squeeze)
+        return image
+
+    #
+    # acquisition
+    #
+
+    def snap_photo(self, timeout_ms=None, squeeze=True):
+        """Acquire a single frame and return it as a numpy array.
+
+        The dtype follows the active pixel format: uint8 for Mono8, uint16 for the deeper formats.
+        Packed formats are converted before conversion to numpy, because vmbpy has no memory layout
+        for them.
+
+        Arguments:
+            timeout_ms (int): how long to wait for the frame. Defaults to the `timeout_ms`
+                constructor argument. Must exceed the exposure time.
+            squeeze (bool): return a 2D (height, width) array instead of the (height, width, 1)
+                which vmbpy produces for monochrome data.
+
+        Returns:
+            numpy.ndarray: the acquired frame
+        """
+        if not self._open:
+            raise InstrumentException(
+                "Camera connection is not open. Call open() before acquiring frames.")
+        if self.is_streaming:
+            raise InstrumentException(
+                "Cannot snap a single frame while the camera is streaming. Stop the stream first, "
+                "or use the frames the streaming callback already delivers.")
+
+        timeout_ms = int(timeout_ms if timeout_ms is not None else self._timeout_ms)
+
+        with self._cam_lock:
+            try:
+                frame = self._cam.get_frame(timeout_ms=timeout_ms)
+            except VmbTimeout as exc:
+                raise InstrumentException(
+                    "No frame arrived within {:d} ms. The exposure time is currently {:.1f} us, so "
+                    "the timeout must be at least that long.".format(
+                        timeout_ms, self.exposure_time)) from exc
+
+            if frame.get_status() != FrameStatus.Complete:
+                raise InstrumentException(
+                    "Camera delivered an incomplete frame: {!s}".format(frame.get_status()))
+
+            image, source_format, delivered_format = self._frame_to_array(frame, squeeze=squeeze)
+
+            self._last_image = image
+            self._last_meta = {
+                'pixel format': source_format,
+                'delivered pixel format': delivered_format,
+                'frame id': frame.get_id(),
+                'camera timestamp': frame.get_timestamp(),
+                'exposure time': self.exposure_time,
+                'gain': self.gain,
+                'roi': self.roi,
+                'timestamp utc': datetime.now(timezone.utc).isoformat(),
+            }
+
+        return self._last_image
+
+    def snap_photos(self, count, timeout_ms=None, squeeze=True):
+        """Acquire several frames in one acquisition run.
+
+        Faster than calling `snap_photo` repeatedly, because the acquisition is only set up once.
+
+        Arguments:
+            count (int): number of frames to acquire
+            timeout_ms (int): per-frame timeout, defaults to the `timeout_ms` constructor argument
+            squeeze (bool): as in `snap_photo`
+
+        Returns:
+            list: a list of numpy arrays, one per frame
+        """
+        if not self._open:
+            raise InstrumentException(
+                "Camera connection is not open. Call open() before acquiring frames.")
+        if self.is_streaming:
+            raise InstrumentException(
+                "Cannot snap frames while the camera is streaming. Stop the stream first, "
+                "or use the frames the streaming callback already delivers.")
+
+        count = int(count)
+        if count < 1:
+            raise ValueError("count must be at least 1, got {:d}.".format(count))
+
+        timeout_ms = int(timeout_ms if timeout_ms is not None else self._timeout_ms)
+        images = []
+
+        with self._cam_lock:
+            try:
+                for frame in self._cam.get_frame_generator(limit=count, timeout_ms=timeout_ms):
+                    if frame.get_status() != FrameStatus.Complete:
+                        raise InstrumentException(
+                            "Camera delivered an incomplete frame: {!s}".format(frame.get_status()))
+
+                    image, _, _ = self._frame_to_array(frame, squeeze=squeeze)
+                    images.append(image)
+            except VmbTimeout as exc:
+                raise InstrumentException(
+                    "No frame arrived within {:d} ms after {:d} of {:d} frames. The exposure time "
+                    "is currently {:.1f} us.".format(
+                        timeout_ms, len(images), count, self.exposure_time)) from exc
+
+            if images:
+                self._last_image = images[-1]
+                self._last_meta = {
+                    'pixel format': self.pixel_format,
+                    'exposure time': self.exposure_time,
+                    'gain': self.gain,
+                    'roi': self.roi,
+                    'timestamp utc': datetime.now(timezone.utc).isoformat(),
+                }
+
+        return images
+
+    def get_recent_photo(self):
+        """The most recent frame acquired by `snap_photo` or `snap_photos`, without touching the
+        camera. Returns None if nothing has been acquired yet."""
+        return self._last_image
+
+    def get_recent_photo_metadata(self):
+        """Settings and frame identifiers captured alongside the most recent frame."""
+        return dict(self._last_meta)
+
+    #
+    # saving
+    #
+
+    def save_photo(self, file_path, image=None, overwrite=True):
+        """Write an image to a PNG or TIFF file. Never called automatically by `snap_photo`.
+
+        Uses PIL rather than `matplotlib.pyplot.imsave`, which normalises and colour maps 2D arrays
+        and would therefore destroy the raw counts. TIFF is preferable for anything deeper than 8
+        bit: Pillow writes 16 bit PNG as mode 'I;16', which many viewers render incorrectly.
+
+        Arguments:
+            file_path (str): destination path, ending in .png, .tif or .tiff
+            image (numpy.ndarray): image to write, defaults to the most recent frame
+            overwrite (bool): if False, refuse to overwrite an existing file
+
+        Returns:
+            str: the absolute path written
+        """
+        from PIL import Image
+
+        image = self.get_recent_photo() if image is None else image
+        if image is None:
+            raise InstrumentException("No image available to save. Call snap_photo() first.")
+
+        image = np.asarray(image)
+        if image.ndim == 3 and image.shape[2] == 1:
+            image = image[:, :, 0]
+
+        file_path = os.path.abspath(file_path)
+        extension = os.path.splitext(file_path)[1].lower()
+        if extension not in ('.png', '.tif', '.tiff'):
+            raise InstrumentException(
+                "Unsupported image extension '{:s}'. Use .png, .tif or .tiff.".format(extension))
+        if os.path.exists(file_path) and not overwrite:
+            raise InstrumentException("Refusing to overwrite existing file " + file_path)
+        if image.dtype == np.uint16 and extension == '.png':
+            self.logger.warning(
+                "Writing 16 bit data to PNG; TIFF is the better container for this depth.")
+
+        directory = os.path.dirname(file_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        Image.fromarray(image).save(file_path)
+        self.logger.info("Saved camera image to %s", file_path)
+        return file_path
+
+    def save_photo_raw(self, file_path, image=None):
+        """Write an image to a .npy file, preserving dtype and values exactly.
+
+        Returns:
+            str: the absolute path written
+        """
+        image = self.get_recent_photo() if image is None else image
+        if image is None:
+            raise InstrumentException("No image available to save. Call snap_photo() first.")
+
+        file_path = os.path.abspath(file_path)
+        directory = os.path.dirname(file_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        np.save(file_path, np.asarray(image))
+        self.logger.info("Saved raw camera image to %s", file_path)
+        return file_path
+
+    #
+    # identification
+    #
+
+    def idn(self):
+        """Identification string.
+
+        Must not raise: `get_instrument_parameter` calls this outside its per-property error
+        handling, so an exception here would discard the whole metadata dictionary.
+        """
+        try:
+            info = self._static_info
+            return "AlliedVision,{:s},{:s},{:s}".format(
+                str(info.get('camera model', 'unknown')),
+                str(info.get('camera serial', 'unknown')),
+                str(info.get('camera firmware', 'unknown')))
+        except Exception as exc:
+            return "AlliedVision Alvium (identification unavailable: {!r})".format(exc)
+
+    #
+    # SCPI/VISA surface of the parent class, stubbed out: this camera has no such interface
+    #
+
+    def clear(self):
+        return None
+
+    def reset(self):
+        return None
+
+    def ready_check_sync(self):
+        return True
+
+    def ready_check_async_setup(self):
+        return None
+
+    def ready_check_async(self):
+        return True
+
+    def check_instrument_errors(self):
+        return None
+
+    def command(self, *args, **kwargs):
+        return None
+
+    def command_channel(self, *args, **kwargs):
+        return None
+
+    def request(self, *args, **kwargs):
+        return ""
+
+    def request_channel(self, *args, **kwargs):
+        return ""
+
+    def query(self, *args, **kwargs):
+        return ""
+
+    def query_channel(self, *args, **kwargs):
+        return ""
+
+    def write(self, *args, **kwargs):
+        return None
+
+    def write_channel(self, *args, **kwargs):
+        return None
+
+    def query_raw_bytes(self, *args, **kwargs):
+        return None

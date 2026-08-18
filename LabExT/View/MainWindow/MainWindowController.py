@@ -559,6 +559,11 @@ class MainWindowController:
         self.serialize_parameter_frame()
         self.view.frame.menu_listener.client_search_for_peak()
 
+    def open_camera_view(self):
+        """opens the live camera view window by calling appropriate menu listener function"""
+        self.serialize_parameter_frame()
+        self.view.frame.menu_listener.client_camera_view()
+
     def open_stage_calibration(self):
         """opens window to calibrate stages"""
         self.serialize_parameter_frame()
@@ -648,5 +653,11 @@ class MainWindowController:
             "<Control-s>",
             callback_if_btn_enabled(
                 lambda event: self.open_peak_searcher(), self.view.frame.coupling_tools_panel.peak_searcher_btn
+            ),
+        )
+        self.root.bind(
+            "<Control-k>",
+            callback_if_btn_enabled(
+                lambda event: self.open_camera_view(), self.view.frame.coupling_tools_panel.camera_view_btn
             ),
         )

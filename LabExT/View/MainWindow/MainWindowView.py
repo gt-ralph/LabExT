@@ -110,6 +110,10 @@ class MainWindowContextMenu(Menu):
             label="Start Live Instrument View (Ctrl+L)",
             command=self._menu_listener.client_live_view,
         )
+        self._view.add_command(
+            label="Camera View (Ctrl+K)",
+            command=self._menu_listener.client_camera_view,
+        )
 
         self._settings.add_command(
             label="Instrument Connection Debugger",
@@ -258,6 +262,7 @@ class MainWindowCouplingTools(LabelFrame):
         self.grid(row=3, column=0, sticky="we")
         self.rowconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
+        self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
 
         self.live_viewer_btn = Button(
@@ -272,6 +277,12 @@ class MainWindowCouplingTools(LabelFrame):
             command=self.controller.open_peak_searcher,
         )
         self.peak_searcher_btn.grid(row=1, column=0, sticky="we", padx=5, pady=5)
+        self.camera_view_btn = Button(
+            self,
+            text="Camera View (Ctrl+K)",
+            command=self.controller.open_camera_view,
+        )
+        self.camera_view_btn.grid(row=2, column=0, sticky="we", padx=5, pady=5)
 
 
 class MainWindowButtonsFrame(LabelFrame):
