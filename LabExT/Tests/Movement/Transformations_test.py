@@ -815,7 +815,12 @@ class KabschRotationTest(unittest.TestCase):
         self.assertEqual(self.transformation.get_leave_one_out_errors_um(), [])
 
     def test_get_fit_residual_um_is_near_zero_for_exact_rigid_data(self):
-        R = Rotation.random().as_matrix()
+        # The Kabsch fit is constrained to preserve the orientation of the
+        # configured axes rotation (identity in setUp), so an arbitrary
+        # rotation would get sign-corrected and could not be recovered. Use a
+        # small misalignment, which is what a real chip mapping looks like.
+        R = Rotation.from_euler(
+            "xyz", np.random.uniform(-10.0, 10.0, 3), degrees=True).as_matrix()
         t = np.random.rand(3, 1)
         chip_points = np.random.rand(3, 5)
         stage_points = (R @ chip_points) + t
