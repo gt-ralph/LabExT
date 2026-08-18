@@ -24,6 +24,7 @@ from LabExT.Measurements.CameraSnapshot import CameraSnapshot
 from LabExT.Utils import get_configuration_file_path, get_visa_address
 from LabExT.View.Controls.CustomFrame import CustomFrame
 from LabExT.View.Controls.InstrumentSelector import InstrumentRole, InstrumentSelector
+from LabExT.View.EditMeasurementWizard.EditMeasurementWizardModel import EditMeasurementWizardModel
 
 
 class CameraViewWindow(Toplevel):
@@ -717,13 +718,68 @@ class CameraViewWindow(Toplevel):
                                  parent=self)
             return
 
-        self.logger.info("Handed camera settings to CameraSnapshot: %s", camera_settings)
+        wizard_stages = self._update_wizard_cache(camera_settings)
+
+        self.logger.info("Handed camera settings to CameraSnapshot: %s (refreshed %d cached "
+                         "wizard stage(s))", camera_settings, wizard_stages)
         self._status_var.set(
             "CameraSnapshot will start from: {:.1f} us, {:.2f} dB, {:s}, {:d}x{:d}+{:d}+{:d}".format(
                 camera_settings['exposure time'], camera_settings['gain'],
                 camera_settings['pixel format'], camera_settings['ROI width'],
                 camera_settings['ROI height'], camera_settings['ROI offset x'],
                 camera_settings['ROI offset y']))
+
+    @staticmethod
+    def _update_wizard_cache(camera_settings):
+        """Refresh the new-measurement wizard's cached copy of these parameters.
+
+        That wizard does not read the measurement's settings file. It builds its table from
+        `get_default_parameter()` and then applies its own per-stage cache over the top
+        (`EditMeasurementWizardController.stage_start`), so a stage that already holds
+        CameraSnapshot's parameters would keep showing stale exposure and gain no matter what the
+        measurement settings say.
+
+        The cache is keyed by stage number with no record of which measurement a stage held, so
+        stages are identified by their parameter names: only one carrying the complete set of
+        camera parameters is touched, and only those keys within it are replaced.
+
+        Returns:
+            int: how many cached stages were updated
+        """
+        cache_path = get_configuration_file_path(EditMeasurementWizardModel.SETTINGS_FILE_NAME)
+        if not os.path.isfile(cache_path):
+            return 0
+
+        try:
+            with open(cache_path, 'r') as cache_file:
+                cache = json.load(cache_file)
+        except Exception as exc:
+            logging.getLogger().warning(
+                "Could not read the measurement wizard cache (%r); it may show stale camera "
+                "settings until the wizard is used again.", exc)
+            return 0
+
+        required = set(CameraSnapshot.CAMERA_SETTING_TYPES)
+        updated = 0
+        for stage in cache.values():
+            if not isinstance(stage, dict):
+                continue
+            stage_data = stage.get('data')
+            if isinstance(stage_data, dict) and required.issubset(stage_data):
+                stage_data.update(camera_settings)
+                updated += 1
+
+        if not updated:
+            return 0
+
+        try:
+            with open(cache_path, 'w') as cache_file:
+                json.dump(cache, cache_file, indent=4)
+        except Exception as exc:
+            logging.getLogger().warning("Could not write the measurement wizard cache (%r).", exc)
+            return 0
+
+        return updated
 
     #
     # settings persistence

@@ -20,6 +20,9 @@ class EditMeasurementWizardModel:
     ----------
     """
 
+    SETTINGS_FILE_NAME = 'EditMeasurementWizard_settings.json'
+    """The file name used for caching user-entries for the next time the wizard is opened."""
+
     def __init__(self, experiment_manager):
 
         self._experiment_manager = experiment_manager
@@ -32,8 +35,7 @@ class EditMeasurementWizardModel:
         self._view = None
 
         # saved user settings
-        self.settings_file_name = 'EditMeasurementWizard_settings.json'
-        """The file name used for caching user-entries for the next time the wizard is opened."""
+        self.settings_file_name = self.SETTINGS_FILE_NAME
 
         # user selected data
         self.settings: Dict[int, Dict] = defaultdict(lambda: {})
