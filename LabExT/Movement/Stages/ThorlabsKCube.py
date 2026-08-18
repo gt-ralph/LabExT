@@ -43,6 +43,18 @@ class MovementType(Enum):
     RELATIVE = 0,
     ABSOLUTE = 1
 
+# Empirically measured mechanical backlash of the Z825B actuators, in micrometers.
+# Configured once per channel via the Kinesis controller's own native backlash
+# compensation (KinesisMotor.setup_gen_move) so the firmware applies it automatically,
+# and only on the axis that actually reverses direction. Adjust if a different stage
+# model with different backlash is used.
+BACKLASH_DISTANCE_UM = 10.0
+
+# Position differences below this are treated as "already there" and no move is
+# issued - avoids spurious real movement for floating-point noise while still allowing
+# genuinely small deliberate moves.
+MIN_MOVE_DISTANCE_UM = 1e-3
+
 class ThorlabsKCube(Stage):
     """
     Simple Stage implementation for testing purposes.
@@ -87,6 +99,7 @@ class ThorlabsKCube(Stage):
             self.name = name
             self._sn = serial_number
             self._stage = Thorlabs.KinesisMotor(self._sn, scale="Z825")
+            self._stage.setup_gen_move(backlash_distance=BACKLASH_DISTANCE_UM * 1e-6)
             self._status = None
             self._movement_mode = MovementType.RELATIVE
             self._position = None
@@ -151,25 +164,29 @@ class ThorlabsKCube(Stage):
                 self,
                 diff: float,
                 mode: MovementType) -> None:
-            """Moves the channel with the specified movement type by the value diff
+            """Moves the channel with the specified movement type by the value diff.
+
+            Backlash compensation is handled natively by the Kinesis controller
+            (configured once in __init__ via setup_gen_move), which applies it
+            automatically to move_by/move_to and only when direction actually reverses.
 
             Parameters
             ----------
             diff : float
-                Channel movement measured in micrometers.
+                Channel movement measured in micrometers. In RELATIVE mode this is the
+                signed distance to move; in ABSOLUTE mode this is the target position.
             mode : MovementType
                 Channel movement type
             """
-            self.movement_mode = mode
-            if self.movement_mode == MovementType.RELATIVE:
-                self._stage.setup_jog(mode="step", step_size=diff*1e-6, stop_mode="immediate")
-                self._stage.jog(direction="+", kind="builtin")
-                self._stage.wait_for_stop()
-            elif self.movement_mode == MovementType.ABSOLUTE:
-                inital_pos = self.position
-                move_by = round(diff - inital_pos, 3) * 1e-6
-                self._stage.setup_jog(mode="step", step_size=move_by, stop_mode="immediate")
-                self._stage.jog(direction="+", kind="builtin")
+            if mode == MovementType.RELATIVE:
+                if np.abs(diff) < MIN_MOVE_DISTANCE_UM:
+                    return
+                self._stage.move_by(diff * 1e-6)
+                self._stage.wait_move()
+            elif mode == MovementType.ABSOLUTE:
+                if np.abs(diff - self.position) < MIN_MOVE_DISTANCE_UM:
+                    return
+                self._stage.move_to(diff * 1e-6)
                 self._stage.wait_move()
 
         def wait_for_stopping(self) -> None:
@@ -209,11 +226,13 @@ class ThorlabsKCube(Stage):
         for stage in self.motor_cfg:
             if stage["axis"] == "X":
                 self.axes.append(Axis.X)
+                self.sns.append(stage["sns"])
             elif stage["axis"] == "Y":
                 self.axes.append(Axis.Y)
-            elif stage["axis"] == "Z":
-                self.axes.append(Axis.Z)
-            self.sns.append(stage["sns"])
+                self.sns.append(stage["sns"])
+            elif stage["axis"] == "Z": # Modified so z is empty (we don't want labext to move the z stage)
+                #self.axes.append(Axis.Z)
+                self.sns.append(None)
 
         for sn, axis in zip(self.sns, self.axes):
             try:
@@ -250,7 +269,7 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     # @assert_stage_connected
     def set_speed_z(self, umps: float):
-        self.channels[Axis.Z].speed = umps
+        # self.channels[Axis.Z].speed = umps
         self._speed_z = umps
 
     @assert_driver_loaded
@@ -303,7 +322,7 @@ class ThorlabsKCube(Stage):
         return [
             self.channels[Axis.X].position,
             self.channels[Axis.Y].position,
-            self.channels[Axis.Z].position,
+            0 #self.channels[Axis.Z].position,
         ]
 
     @assert_driver_loaded
@@ -323,7 +342,7 @@ class ThorlabsKCube(Stage):
             z)
         self.channels[Axis.X].move(diff=x, mode=MovementType.RELATIVE)
         self.channels[Axis.Y].move(diff=y, mode=MovementType.RELATIVE)
-        self.channels[Axis.Z].move(diff=z, mode=MovementType.RELATIVE)
+        # self.channels[Axis.Z].move(diff=z, mode=MovementType.RELATIVE)
        
         if wait_for_stopping:
             self._wait_for_stopping(self.channels)
@@ -348,8 +367,8 @@ class ThorlabsKCube(Stage):
             self.channels[Axis.X].move(diff=x, mode=MovementType.ABSOLUTE)
         if y is not None:
             self.channels[Axis.Y].move(diff=y, mode=MovementType.ABSOLUTE)
-        if z is not None:
-            self.channels[Axis.Z].move(diff=z, mode=MovementType.ABSOLUTE)
+        # if z is not None:
+        #     self.channels[Axis.Z].move(diff=z, mode=MovementType.ABSOLUTE)
         
         if wait_for_stopping:
             self._wait_for_stopping(self.channels)
