@@ -213,19 +213,17 @@ class InstrumentsChooserWidget(InstrumentSelector):
         self.logger = logging.getLogger()
 
         available_instruments = dict()
-        # we specifically only want a laser and a powermeter
-        io_set = get_visa_address('Laser')
-        available_instruments.update({'Laser': InstrumentRole(self.parent.parent.root, io_set)})
-        io_set = get_visa_address('Power Meter 1')
-        available_instruments.update({'Power Meter 1': InstrumentRole(self.parent.parent.root, io_set)})
-        io_set = get_visa_address('Power Meter 2')
-        available_instruments.update({'Power Meter 2': InstrumentRole(self.parent.parent.root, io_set)})
-        io_set = get_visa_address('Power Meter 3')
-        available_instruments.update({'Power Meter 3': InstrumentRole(self.parent.parent.root, io_set)})
-        io_set = get_visa_address('Power Meter 4')
-        available_instruments.update({'Power Meter 4': InstrumentRole(self.parent.parent.root, io_set)})
-        io_set = get_visa_address('Switch')
-        available_instruments.update({'Switch': InstrumentRole(self.parent.parent.root, io_set)})
+        # the roles come from the searcher itself, so the two cannot drift apart
+        for role in PeakSearcher.get_wanted_instrument():
+            io_set = list(get_visa_address(role))
+            if role in PeakSearcher.POWER_METER_ROLES:
+                # Offer leaving a meter slot out entirely. Only one detector is required, and a
+                # search fed by a camera or a single photodiode should not also be reading meters
+                # that are not part of the setup.
+                io_set.insert(0, {'visa': 'None',
+                                  'class': PeakSearcher.UNUSED_INSTRUMENT_CLASS,
+                                  'channels': []})
+            available_instruments.update({role: InstrumentRole(self.parent.parent.root, io_set)})
 
         self.title = 'Choose instruments'
         self.instrument_source = available_instruments
@@ -560,13 +558,16 @@ class SearchForPeakPlotsWindowController:
                                 parent=self.view.main_window)
             self.logger.debug("Search for peak algorithm done.")
 
-        # beautify plots with legends, axes labels, and titles
+        # beautify plots with legends, axes labels, and titles. The signal label follows whatever
+        # the selected detectors report; getattr because the label is only meaningful once a search
+        # has configured its instruments, and this also runs when search_for_peak() raised.
+        signal_label = getattr(self.model.peak_searcher, 'merit_axis_label', 'power [dBm]')
         self.view.main_window.plotting_frame.plot_left.ax.legend(loc='lower center')
-        self.view.main_window.plotting_frame.plot_left.set_axes('deviation from start [um]', 'power [dBm]')
+        self.view.main_window.plotting_frame.plot_left.set_axes('deviation from start [um]', signal_label)
         self.view.main_window.plotting_frame.plot_left.title = 'Left Stage'
         self.view.main_window.plotting_frame.plot_left.__update_canvas__()
         self.view.main_window.plotting_frame.plot_right.ax.legend(loc='lower center')
-        self.view.main_window.plotting_frame.plot_right.set_axes('deviation from start [um]', 'power [dBm]')
+        self.view.main_window.plotting_frame.plot_right.set_axes('deviation from start [um]', signal_label)
         self.view.main_window.plotting_frame.plot_right.title = 'Right Stage'
         self.view.main_window.plotting_frame.plot_right.__update_canvas__()
 

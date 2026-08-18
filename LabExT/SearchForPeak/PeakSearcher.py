@@ -27,6 +27,12 @@ from LabExT.ViewModel.Utilities.ObservableList import ObservableList
 # its start position rather than trusting the Gaussian fit's suggested location.
 NO_PEAK_FOUND_DYNAMIC_RANGE_DB = 3.0
 
+# Linear-signal counterpart of the threshold above, for detectors reporting raw counts rather than
+# dBm. Expressed as a minimum contrast (max-min)/max rather than a max/min ratio: after dark-frame
+# subtraction the minimum of a camera scan routinely sits at or below zero, which would make a ratio
+# infinite or undefined. The two forms are equivalent, (max-min)/max == 1 - 10**(-dB/10).
+NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST = 1.0 - 10 ** (-NO_PEAK_FOUND_DYNAMIC_RANGE_DB / 10.0)
+
 # A Gaussian fit whose optimum lands beyond this fraction of the search radius is
 # treated as potentially clipped - the true peak may lie outside the scanned window,
 # so the fitted centre is not trustworthy as an absolute reference. The move itself
@@ -109,6 +115,15 @@ class PeakSearcher(Measurement):
     DIMENSION_NAMES_SINGLE_STAGE = ['X', 'Y']
     PASS_NAMES = ['First', 'Second', 'Third']
 
+    #: Power meter roles offered. Only one of them has to be filled; the rest can be left at
+    #: UNUSED_INSTRUMENT_CLASS. Also read by the Search for Peak window to build its dropdowns.
+    POWER_METER_ROLES = ['Power Meter 1', 'Power Meter 2', 'Power Meter 3', 'Power Meter 4']
+
+    #: Sentinel class name for a meter slot the user does not want read at all. Roles selected as
+    #: this are skipped by init_instruments() rather than instantiated, so a search fed by one
+    #: instrument is not polluted by readings from meters that are not part of the setup.
+    UNUSED_INSTRUMENT_CLASS = '-- not used --'
+
     def __init__(
         self,
         *args,
@@ -138,12 +153,14 @@ class PeakSearcher(Measurement):
 
         # chosen instruments for IL measurement
         self.instr_laser = None
-        self.instr_powermeter1 = None
-        self.instr_powermeter2 = None
-        self.instr_powermeter3 = None
-        self.instr_powermeter4 = None
+        #: the power meters actually selected, in role order; at least one, at most four
+        self.instr_powermeters = []
         self.instr_switch = None
         self.initialized = False
+
+        # merit semantics, set from the instruments and parameters at the start of a search
+        self._merit_is_linear = False
+        self._merit_unit_label = 'dBm'
 
         self.logger.info(
             'Initialized Search for Peak with method: ' + str(self.name))
@@ -207,6 +224,16 @@ class PeakSearcher(Measurement):
         assert len(x_data) > 0
         assert len(y_data) > 0
 
+        # Fit on normalised data. curve_fit's ftol is a *relative* reduction of the sum of squared
+        # residuals, so on a trace of order 1e6 - which an integrated camera ROI easily is - the
+        # residuals are of order 1e12 and the optimiser converges early, landing the fitted centre
+        # over a tenth of a micrometre off a noiseless synthetic Gaussian. Amplitude and offset are
+        # scaled back afterwards; the centre and width are unaffected by the scaling.
+        y_scale = float(np.max(np.abs(y_data)))
+        if not np.isfinite(y_scale) or y_scale <= 0.0:
+            y_scale = 1.0
+        y_data = y_data / y_scale
+
         pinit = PeakSearcher._gaussian_param_initial_guess(x_data, y_data)
 
         # define bounds for the fitting parameters
@@ -227,11 +254,18 @@ class PeakSearcher(Measurement):
                               ftol=1e-8,
                               maxfev=10000)
 
+        perr_std_dev = np.sqrt(np.diag(cov))
+
+        # undo the normalisation on the two parameters carrying the y units
+        popt = np.array(popt, dtype=float)
+        popt[0] *= y_scale
+        popt[3] *= y_scale
+        perr_std_dev[0] *= y_scale
+        perr_std_dev[3] *= y_scale
+
         self.logger.debug('Gaussian Fit:')
         self.logger.debug('a -- mu -- sigma -- offset')
         self.logger.debug(str(popt))
-
-        perr_std_dev = np.sqrt(np.diag(cov))
 
         return popt, perr_std_dev
 
@@ -251,7 +285,7 @@ class PeakSearcher(Measurement):
         whose trigger() is a no-op and fetch_power() reads the same instantaneous value
         as .power) this is equivalent to the old behaviour - no regression either way.
         """
-        meters = [self.instr_powermeter1, self.instr_powermeter2, self.instr_powermeter3, self.instr_powermeter4]
+        meters = self.instr_powermeters
         samples = [[] for _ in meters]
         t_end = time.perf_counter() + averaging_time_s
         while True:
@@ -262,6 +296,111 @@ class PeakSearcher(Measurement):
             if time.perf_counter() >= t_end:
                 break
         return [float(np.mean(sample_list)) for sample_list in samples]
+
+    def init_instruments(self):
+        """Instantiate the selected instruments, skipping meter slots left unused.
+
+        The base implementation instantiates every role in `get_wanted_instrument()` and then
+        rejects any that came back None, so it has no concept of an optional role. Search for Peak
+        needs one: with a single detector (a camera, or one photodiode) the other meter slots have
+        nothing sensible to point at.
+        """
+        skipped = []
+        for role in self.get_wanted_instrument():
+            descriptor = self.selected_instruments.get(role, {})
+            if descriptor.get('class') == self.UNUSED_INSTRUMENT_CLASS:
+                skipped.append(role)
+                continue
+            self._experiment_manager.instrument_api.create_instrument_obj(
+                role, self.selected_instruments, self.instruments)
+
+        if skipped:
+            self.logger.debug("Search for Peak skipping unused instrument roles: %s",
+                              ", ".join(skipped))
+
+        if not all(instr is not None for instr in self.instruments.values()):
+            raise RuntimeError('Instruments were not initialized correctly.')
+
+    def _get_optional_instrument(self, instrument_type: str):
+        """Like `get_instrument`, but returns None for a role that was not selected.
+
+        `Measurement.get_instrument` raises for both an absent and an uninitialised role, which is
+        right for a mandatory instrument and wrong for an optional one.
+        """
+        for (role, _), instr in self.instruments.items():
+            if role == instrument_type:
+                return instr
+        return None
+
+    def _configure_power_meters(self):
+        """Push the laser wavelength, range and merit unit onto the selected meters.
+
+        Camera-backed meters report integrated image counts, not optical power, so wavelength and
+        range mean nothing to them and only the unit applies. They are told apart by a class-level
+        flag rather than by probing for attributes: this class writes attributes like `unit` onto
+        meters that never declared them, so an instance-level probe would be self-fulfilling.
+        """
+        camera_backed = [bool(getattr(type(meter), 'IS_CAMERA_BACKED', False))
+                         for meter in self.instr_powermeters]
+
+        if any(camera_backed) and not all(camera_backed):
+            raise RuntimeError(
+                'Both a camera-backed power meter and a conventional optical power meter are '
+                'selected. Their readings are on different scales - integrated camera counts '
+                'versus dBm - so taking the maximum across them at each scan point would be '
+                'meaningless. Select only one kind of detector.')
+
+        merit_unit = self.parameters['Camera merit unit'].value
+        for meter in self.instr_powermeters:
+            if getattr(type(meter), 'IS_CAMERA_BACKED', False):
+                meter.unit = merit_unit
+            else:
+                meter.unit = 'dBm'
+                meter.wavelength = self.parameters['Laser wavelength'].value
+                meter.range = self.parameters['Power Meter range'].value
+
+        self._merit_is_linear = bool(camera_backed) and all(camera_backed) and merit_unit == 'counts'
+        self._merit_unit_label = merit_unit if (camera_backed and all(camera_backed)) else 'dBm'
+
+    @property
+    def merit_axis_label(self):
+        """Axis label for the scan traces, following what the selected detectors report."""
+        if self._merit_unit_label == 'counts':
+            return 'integrated intensity [counts]'
+        if self._merit_unit_label == 'dB':
+            return 'integrated intensity [dB re counts]'
+        return 'power [dBm]'
+
+    def _has_enough_dynamic_range(self, values) -> bool:
+        """Whether a scan trace varies enough to be believed as a real peak.
+
+        On a logarithmic signal a fixed span in dB is the criterion. On raw counts a fixed span is
+        meaningless, so the dimensionless contrast (max-min)/max is used instead: it agrees exactly
+        with the dB form and stays finite when dark subtraction puts the trace minimum at or below
+        zero, which a ratio would not.
+        """
+        span = float(np.max(values) - np.min(values))
+        if not self._merit_is_linear:
+            return span >= NO_PEAK_FOUND_DYNAMIC_RANGE_DB
+        peak = float(np.max(values))
+        if peak <= 0.0:
+            return False
+        return (span / peak) >= NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST
+
+    def _dynamic_range_message(self, values) -> str:
+        span = float(np.max(values) - np.min(values))
+        if not self._merit_is_linear:
+            return (f'Dynamic range of {span:.2f}dB is below the '
+                    f'{NO_PEAK_FOUND_DYNAMIC_RANGE_DB}dB no-peak-found threshold. '
+                    'No clear peak detected; staying at start point.')
+        peak = float(np.max(values))
+        if peak <= 0.0:
+            return (f'Scan maximum is {peak:.4g} counts, which is not positive, so there is no '
+                    'signal to search on. Staying at start point.')
+        return (f'Contrast of {span / peak:.1%} (min {np.min(values):.4g}, max {peak:.4g} counts) '
+                f'is below the {NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST:.1%} no-peak-found '
+                f'threshold, the linear equivalent of {NO_PEAK_FOUND_DYNAMIC_RANGE_DB}dB. '
+                'No clear peak detected; staying at start point.')
 
     @staticmethod
     def get_default_parameter():
@@ -274,6 +413,10 @@ class PeakSearcher(Measurement):
             'Laser wavelength': MeasParamInt(value=1550, unit='nm'),
             'Laser power': MeasParamFloat(value=0.0, unit='dBm'),
             'Power Meter range': MeasParamFloat(value=0.0, unit='dBm'),
+            # Only applies to camera-backed power meters. Counts is the default because the
+            # intensity profile of a beam is Gaussian in linear units, which is the shape
+            # fit_gaussian() looks for; in dB it is a parabola and fits less well.
+            'Camera merit unit': MeasParamList(options=['counts', 'dB'], value='counts'),
         }
         for pass_name in PeakSearcher.PASS_NAMES:
             params.update({
@@ -292,7 +435,7 @@ class PeakSearcher(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Laser', 'Power Meter 1', 'Power Meter 2', 'Power Meter 3', 'Power Meter 4', 'Switch']
+        return ['Laser'] + PeakSearcher.POWER_METER_ROLES + ['Switch']
 
     def search_for_peak(self):
         """Main Search For Peak routine
@@ -314,23 +457,18 @@ class PeakSearcher(Measurement):
         else:
             self._dimension_names = self.DIMENSION_NAMES_SINGLE_STAGE
 
-        # load laser and powermeter
-        self.instr_powermeter1 = self.get_instrument('Power Meter 1')
-        self.instr_powermeter2 = self.get_instrument('Power Meter 2')
-        self.instr_powermeter3 = self.get_instrument('Power Meter 3')
-        self.instr_powermeter4 = self.get_instrument('Power Meter 4')
+        # load laser and powermeters. Meter slots left unused are simply absent.
+        self.instr_powermeters = [meter for meter in
+                                  (self._get_optional_instrument(role) for role in self.POWER_METER_ROLES)
+                                  if meter is not None]
         self.instr_laser = self.get_instrument('Laser')
-        self.instr_switch = self.get_instrument('Switch')
+        self.instr_switch = self._get_optional_instrument('Switch')
 
         # double check if instruments are initialized, otherwise throw error
-        if self.instr_powermeter1 is None:
-            raise RuntimeError('Search for Peak Power Meter 1 not yet defined!')
-        if self.instr_powermeter2 is None:
-            raise RuntimeError('Search for Peak Power Meter 2 not yet defined!')
-        if self.instr_powermeter3 is None:
-            raise RuntimeError('Search for Peak Power Meter 3 not yet defined!')
-        if self.instr_powermeter4 is None:
-            raise RuntimeError('Search for Peak Power Meter 4 not yet defined!')
+        if not self.instr_powermeters:
+            raise RuntimeError(
+                'Search for Peak needs at least one Power Meter selected, but every meter slot is '
+                'set to ' + self.UNUSED_INSTRUMENT_CLASS + '!')
         if self.instr_laser is None:
             raise RuntimeError('Search for Peak Laser not yet defined!')
 
@@ -340,12 +478,9 @@ class PeakSearcher(Measurement):
 
         # open connection to instruments
         self.instr_laser.open()
-        self.instr_powermeter1.open()
-        self.instr_powermeter2.open()
-        self.instr_powermeter3.open()
-        self.instr_powermeter4.open()
+        for meter in self.instr_powermeters:
+            meter.open()
         if self.parameters['Switch Flag'].value:
-            self.instr_switch = self.get_instrument('Switch')
             if self.instr_switch is None:
                 raise RuntimeError('Search for Peak Switch not yet defined!')
             self.instr_switch.open()
@@ -372,28 +507,15 @@ class PeakSearcher(Measurement):
         # send user specified parameters to instruments
         self.instr_laser.wavelength = self.parameters['Laser wavelength'].value
         self.instr_laser.power = self.parameters['Laser power'].value
-        self.instr_powermeter1.unit = 'dBm'
-        self.instr_powermeter1.wavelength = self.parameters['Laser wavelength'].value
-        self.instr_powermeter1.range = self.parameters['Power Meter range'].value
-        self.instr_powermeter2.unit = 'dBm'
-        self.instr_powermeter2.wavelength = self.parameters['Laser wavelength'].value
-        self.instr_powermeter2.range = self.parameters['Power Meter range'].value
-        self.instr_powermeter3.unit = 'dBm'
-        self.instr_powermeter3.wavelength = self.parameters['Laser wavelength'].value
-        self.instr_powermeter3.range = self.parameters['Power Meter range'].value
-        self.instr_powermeter4.unit = 'dBm'
-        self.instr_powermeter4.wavelength = self.parameters['Laser wavelength'].value
-        self.instr_powermeter4.range = self.parameters['Power Meter range'].value
+        self._configure_power_meters()
 
         # get stage speed for later reference
         v0 = self.mover.speed_xy
         acc0 = self.mover.acceleration_xy
 
         # stop all previous logging
-        self.instr_powermeter1.logging_stop()
-        self.instr_powermeter2.logging_stop()
-        self.instr_powermeter3.logging_stop()
-        self.instr_powermeter4.logging_stop()
+        for meter in self.instr_powermeters:
+            meter.logging_stop()
 
         # switch on laser
         num_peak_searches = [
@@ -441,34 +563,24 @@ class PeakSearcher(Measurement):
                         # create new plotting dataset for measurement
                         meas_plot = PlotData(ObservableList(), ObservableList(),
                                             'scatter', color=color_strings[dimidx])
-                        meas_plot1 = PlotData(ObservableList(), ObservableList(),
-                                            'scatter', color=color_strings[dimidx])
-                        meas_plot2 = PlotData(ObservableList(), ObservableList(),
-                                            'scatter', color=color_strings[dimidx])
-                        meas_plot3 = PlotData(ObservableList(), ObservableList(),
-                                            'scatter', color=color_strings[dimidx])
-                        meas_plot4 = PlotData(ObservableList(), ObservableList(),
-                                            'scatter', color=color_strings[dimidx])
+                        # With a single meter the merit trace already is that meter's trace, so a
+                        # per-meter trace would just be drawn on top of it.
+                        per_meter_plots = [] if len(self.instr_powermeters) < 2 else [
+                            PlotData(ObservableList(), ObservableList(),
+                                     'scatter', color=color_strings[dimidx])
+                            for _ in self.instr_powermeters]
                         fit_plot = PlotData(ObservableList(), ObservableList(),
                                             color=color_strings[dimidx], label=dimension_name)
                         opt_pos_plot = PlotData(ObservableList(), ObservableList(),
                                                 marker='x', markersize=10, color=color_strings[dimidx])
-                        if dimidx < len(start_coordinates) / 2:
-                            self.plots_left.append(meas_plot)
-                            self.plots_left.append(meas_plot1)
-                            self.plots_left.append(meas_plot2)
-                            self.plots_left.append(meas_plot3)
-                            self.plots_left.append(meas_plot4)
-                            self.plots_left.append(fit_plot)
-                            self.plots_left.append(opt_pos_plot)
-                        else:
-                            self.plots_right.append(meas_plot)
-                            self.plots_right.append(meas_plot1)
-                            self.plots_right.append(meas_plot2)
-                            self.plots_right.append(meas_plot3)
-                            self.plots_right.append(meas_plot4)
-                            self.plots_right.append(fit_plot)
-                            self.plots_right.append(opt_pos_plot)
+
+                        target_plots = self.plots_left if dimidx < len(start_coordinates) / 2 \
+                            else self.plots_right
+                        target_plots.append(meas_plot)
+                        for per_meter_plot in per_meter_plots:
+                            target_plots.append(per_meter_plot)
+                        target_plots.append(fit_plot)
+                        target_plots.append(opt_pos_plot)
 
                         # create range of N measurement points from x-Delta to
                         # x+Delta
@@ -489,21 +601,16 @@ class PeakSearcher(Measurement):
 
                             # take IL measurement, averaged over power_averaging_time_s
                             # to reduce point-to-point noise in the scan trace
-                            p1, p2, p3, p4 = self._read_averaged_power(power_averaging_time_s)
-                            loss = max(p1, p2, p3, p4)
+                            powers = self._read_averaged_power(power_averaging_time_s)
+                            loss = max(powers)
 
                             # save data
                             # do not trigger plot update just yet
+                            for per_meter_plot, power in zip(per_meter_plots, powers):
+                                per_meter_plot.x.extend([d_current])
+                                per_meter_plot.y.append(power)
                             meas_plot.x.extend([d_current])
                             meas_plot.y.append(loss)
-                            meas_plot1.x.extend([d_current])
-                            meas_plot1.y.append(p1)
-                            meas_plot2.x.extend([d_current])
-                            meas_plot2.y.append(p2)
-                            meas_plot3.x.extend([d_current])
-                            meas_plot3.y.append(p3)
-                            meas_plot4.x.extend([d_current])
-                            meas_plot4.y.append(p4)
 
                             IL_meas[measidx] = loss
 
@@ -546,13 +653,9 @@ class PeakSearcher(Measurement):
                             if abs(d_best) > 1.5 * radius_us:
                                 sfp_msg = 'Movement would be more than 1.5x search radius. Moving back to start point.'
                                 self.logger.warning(sfp_msg)
-                            elif (np.max(IL_meas) - np.min(IL_meas)) < NO_PEAK_FOUND_DYNAMIC_RANGE_DB:
+                            elif not self._has_enough_dynamic_range(IL_meas):
                                 optimized_target = 0
-                                sfp_msg = (
-                                    f'Dynamic range of {np.max(IL_meas) - np.min(IL_meas):.2f}dB is below the '
-                                    f'{NO_PEAK_FOUND_DYNAMIC_RANGE_DB}dB no-peak-found threshold. '
-                                    'No clear peak detected; staying at start point.'
-                                )
+                                sfp_msg = self._dynamic_range_message(IL_meas)
                                 self.logger.warning(sfp_msg)
                             else:
                                 optimized_target = d_best
@@ -586,7 +689,7 @@ class PeakSearcher(Measurement):
                             f"Search for peak for dimension {dimension_name} finished. "
                             f"Fitter message: {fit_msg} -- SFP decision: {sfp_msg} "
                             f"Moving to location: {optimized_target:.3f}um with estimated through power"
-                            f" of {estimated_through_power:.1f}dBm.")
+                            f" of {estimated_through_power:.4g}{self._merit_unit_label}.")
 
                         # A fit whose optimum sits at the very edge of the scanned window
                         # may be clipped (true peak possibly outside the window), so the
@@ -627,24 +730,22 @@ class PeakSearcher(Measurement):
                         if verified_through_power < results['start through power']:
                             self.logger.warning(
                                 f"Search for peak on dimension {dimension_name}: verified power "
-                                f"{verified_through_power:.2f}dBm after the final move is WORSE than the "
-                                f"pass start power {results['start through power']:.2f}dBm "
-                                f"(fit estimated {estimated_through_power:.2f}dBm)."
+                                f"{verified_through_power:.4g}{self._merit_unit_label} after the final move is WORSE than "
+                                f"the pass start power {results['start through power']:.4g}{self._merit_unit_label} "
+                                f"(fit estimated {estimated_through_power:.4g}{self._merit_unit_label})."
                             )
                         else:
                             self.logger.debug(
                                 f"Search for peak on dimension {dimension_name}: verified power "
-                                f"{verified_through_power:.2f}dBm after the final move "
-                                f"(fit estimated {estimated_through_power:.2f}dBm, "
-                                f"pass start was {results['start through power']:.2f}dBm)."
+                                f"{verified_through_power:.4g}{self._merit_unit_label} after the final move "
+                                f"(fit estimated {estimated_through_power:.4g}{self._merit_unit_label}, "
+                                f"pass start was {results['start through power']:.4g}{self._merit_unit_label})."
                             )
 
         # close instruments
         self.instr_laser.close()
-        self.instr_powermeter1.close()
-        self.instr_powermeter2.close()
-        self.instr_powermeter3.close()
-        self.instr_powermeter4.close()
+        for meter in self.instr_powermeters:
+            meter.close()
         if self.parameters['Switch Flag'].value:
             self.instr_switch.close()
 
@@ -652,7 +753,8 @@ class PeakSearcher(Measurement):
         loc_str = " x ".join(["{:.3f}um".format(p)
                              for p in current_coordinates])
         self.logger.info(
-            f"Search for peak finished: maximum estimated output power of {estimated_through_power:.1f}dBm"
+            f"Search for peak finished: maximum estimated output power of "
+            f"{estimated_through_power:.4g}{self._merit_unit_label}"
             f" at {loc_str:s}.")
 
         # save end result and return

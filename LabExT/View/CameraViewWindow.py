@@ -21,6 +21,7 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 
 from LabExT.Measurements.CameraSnapshot import CameraSnapshot
+from LabExT.Instruments.PowerMeterCameraAlvium import PowerMeterCameraAlvium
 from LabExT.Utils import get_configuration_file_path, get_visa_address
 from LabExT.View.Controls.CustomFrame import CustomFrame
 from LabExT.View.Controls.InstrumentSelector import InstrumentRole, InstrumentSelector
@@ -130,6 +131,7 @@ class CameraViewWindow(Toplevel):
         self._build_format_roi_controls(controls)
         self._build_display_controls(controls)
         self._build_save_controls(controls)
+        self._build_dark_reference_controls(controls)
         self._build_histogram(controls)
 
     def _build_instrument_controls(self, parent):
@@ -256,6 +258,91 @@ class CameraViewWindow(Toplevel):
 
         frame.columnconfigure(1, weight=1)
 
+    def _build_dark_reference_controls(self, parent):
+        frame = CustomFrame(parent)
+        frame.title = " Dark Reference "
+        frame.pack(side=TOP, fill=X, pady=2)
+
+        Label(frame, text="frames to average").grid(row=0, column=0, sticky='w')
+        self._dark_frames_var = StringVar(self, value='16')
+        Entry(frame, textvariable=self._dark_frames_var, width=6).grid(row=0, column=1, sticky='we')
+
+        self._dark_button = Button(frame, text="Capture Dark Reference",
+                                   command=self._on_capture_dark_reference)
+        self._dark_button.grid(row=1, column=0, columnspan=2, sticky='we', pady=(4, 0))
+
+        self._dark_status_var = StringVar(self, value="")
+        Label(frame, textvariable=self._dark_status_var, anchor='w', justify=LEFT,
+              wraplength=240).grid(row=2, column=0, columnspan=2, sticky='we')
+        frame.columnconfigure(0, weight=1)
+
+        self._refresh_dark_reference_status()
+
+    def _refresh_dark_reference_status(self):
+        """Show what the stored dark reference was captured with, so a stale one is obvious."""
+        metadata = PowerMeterCameraAlvium.load_dark_reference_metadata()
+        if not metadata:
+            self._dark_status_var.set(
+                "None stored. The camera-backed power meter needs one before it will run.")
+            return
+        self._dark_status_var.set(
+            "Stored: {:s}, {:.0f} us, {:.1f} dB, {:d} frames, mean {:.2f} counts".format(
+                str(metadata.get('pixel format')), float(metadata.get('exposure time', 0.0)),
+                float(metadata.get('gain', 0.0)), int(metadata.get('frames averaged', 0)),
+                float(metadata.get('mean level', 0.0))))
+
+    def _on_capture_dark_reference(self):
+        """Average some frames with the beam blocked and store them as the dark reference.
+
+        Whatever the camera sees now is subtracted from every later reading of the camera-backed
+        power meter, so the beam really does have to be off.
+        """
+        if not self._connected:
+            messagebox.showinfo("Not connected", "Connect to the camera first.", parent=self)
+            return
+
+        try:
+            frames = int(float(self._dark_frames_var.get()))
+        except ValueError:
+            messagebox.showerror("Invalid input", "Frames to average must be a number.", parent=self)
+            return
+        if frames < 1:
+            messagebox.showerror("Invalid input", "Frames to average must be at least 1.",
+                                 parent=self)
+            return
+
+        if not messagebox.askokcancel(
+                "Block the beam",
+                "Block the beam or cap the lens before continuing.\n\n"
+                "Whatever the camera sees now becomes the background that is subtracted from every "
+                "later reading, so any light still reaching the sensor will be subtracted away as "
+                "though it were sensor offset.", parent=self):
+            return
+
+        was_streaming = self._streaming
+        try:
+            if was_streaming:
+                self.camera.stop_streaming()
+            metadata = PowerMeterCameraAlvium.capture_dark_reference(self.camera, frames=frames)
+        except Exception as exc:
+            self.logger.exception("Could not capture a dark reference.")
+            messagebox.showerror("Capture failed", str(exc), parent=self)
+            return
+        finally:
+            if was_streaming:
+                try:
+                    self.camera.start_streaming(handler=self._frame_handler,
+                                                buffer_count=self.STREAM_BUFFER_COUNT)
+                except Exception:
+                    self.logger.exception("Could not restart the camera stream.")
+            self._update_button_states()
+
+        self.logger.info("Captured dark reference: %s", metadata)
+        self._refresh_dark_reference_status()
+        self._status_var.set(
+            "Dark reference captured from {:d} frames, mean {:.2f} counts. Unblock the beam.".format(
+                frames, float(metadata.get('mean level', 0.0))))
+
     def _build_histogram(self, parent):
         frame = CustomFrame(parent)
         frame.title = " Histogram "
@@ -292,6 +379,7 @@ class CameraViewWindow(Toplevel):
         self._stop_button.config(state=NORMAL if streaming else DISABLED)
         self._apply_button.config(state=NORMAL if connected else DISABLED)
         self._handover_button.config(state=NORMAL if connected else DISABLED)
+        self._dark_button.config(state=NORMAL if connected else DISABLED)
         self._save_button.config(
             state=NORMAL if self._displayed_frame is not None else DISABLED)
         self.instrument_selector.enabled = not connected
@@ -802,6 +890,7 @@ class CameraViewWindow(Toplevel):
                 'filename prefix': self._filename_prefix_var.get(),
                 'save png': bool(self._save_png_var.get()),
                 'save tiff': bool(self._save_tiff_var.get()),
+                'dark frames': self._dark_frames_var.get(),
             })
             if self._connected:
                 settings['exposure time'] = float(self.camera.exposure_time)
@@ -836,6 +925,7 @@ class CameraViewWindow(Toplevel):
             self._filename_prefix_var.set(str(settings.get('filename prefix', 'camera')))
             self._save_png_var.set(bool(settings.get('save png', True)))
             self._save_tiff_var.set(bool(settings.get('save tiff', True)))
+            self._dark_frames_var.set(str(settings.get('dark frames', '16')))
         except (KeyError, IndexError, ValueError, TypeError, json.JSONDecodeError):
             self.logger.exception("Camera view settings could not be applied, using defaults.")
 
