@@ -8,6 +8,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 import json
 import logging
 import os
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from time import sleep
 
@@ -84,6 +85,7 @@ class CameraSnapshot(Measurement):
         self.wanted_instruments = CameraSnapshot.get_wanted_instrument()
 
         self.instr_camera = None
+        self.instr_laser = None
 
     #: parameters the camera view can hand over, mapped to the type each one must be stored as.
     #: Kept here rather than in the GUI so that the two sides cannot drift apart.
@@ -107,6 +109,12 @@ class CameraSnapshot(Measurement):
             'ROI height': MeasParamInt(value=0, unit='px'),
             'ROI offset x': MeasParamInt(value=0, unit='px'),
             'ROI offset y': MeasParamInt(value=0, unit='px'),
+            # The laser has to be driven from here. Search for Peak enables it only inside a
+            # `with self.instr_laser:` block and switches it off again on the way out, so by the
+            # time a measurement runs the light is off unless the measurement turns it back on.
+            'laser enabled': MeasParamBool(value=True),
+            'laser wavelength': MeasParamFloat(value=1550.0, unit='nm'),
+            'laser power': MeasParamFloat(value=-15.0, unit='dBm'),
             'number of frames': MeasParamInt(value=1),
             'inter-frame delay': MeasParamFloat(value=0.0, unit='s'),
             'frame timeout': MeasParamFloat(value=5000.0, unit='ms'),
@@ -171,7 +179,7 @@ class CameraSnapshot(Measurement):
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Camera']
+        return ['Laser', 'Camera']
 
     @staticmethod
     def _resolve_output_target(output_directory, data):
@@ -216,6 +224,9 @@ class CameraSnapshot(Measurement):
         save_npy = parameters.get('save NPY').value
         output_directory = parameters.get('image output directory').value
         close_camera = parameters.get('close camera after measurement').value
+        laser_enabled = parameters.get('laser enabled').value
+        laser_wavelength = parameters.get('laser wavelength').value
+        laser_power = parameters.get('laser power').value
 
         if n_frames < 1:
             raise ValueError("number of frames must be at least 1, got {:d}.".format(n_frames))
@@ -224,11 +235,18 @@ class CameraSnapshot(Measurement):
                 "frame timeout ({:.1f} ms) must be longer than the exposure time ({:.1f} us = "
                 "{:.1f} ms).".format(frame_timeout, exposure_time, exposure_time / 1000.0))
 
-        # get the instrument
+        # get the instruments
         self.instr_camera = instruments['Camera']
+        self.instr_laser = instruments['Laser']
 
-        # open connection to the camera
+        # open connections
         self.instr_camera.open()
+        self.instr_laser.open()
+
+        if laser_enabled:
+            self.instr_laser.unit = 'dBm'
+            self.instr_laser.wavelength = laser_wavelength
+            self.instr_laser.power = laser_power
 
         # Apply settings. The order matters: changing the pixel format or the ROI can move the
         # limits of the other features, so those go first.
@@ -285,48 +303,56 @@ class CameraSnapshot(Measurement):
         std_counts = []
         saturated_fractions = []
 
-        if frame_delay > 0.0:
-            images = None  # captured one at a time below, so the delay is actually honoured
-        else:
-            images = self.instr_camera.snap_photos(n_frames, timeout_ms=int(frame_timeout))
+        # The laser is on for the whole capture: `with` enables it on the way in and switches it
+        # off again on the way out, including if a capture raises, so a failed run cannot leave
+        # light on the chip. nullcontext covers 'laser enabled' being unticked, which is how a
+        # dark frame or a reference shot is taken.
+        laser_on = self.instr_laser if laser_enabled else nullcontext()
 
-        image = None
-        for idx in range(n_frames):
-            if images is None:
-                if idx > 0:
-                    sleep(frame_delay)
-                image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+        with laser_on:
+            if frame_delay > 0.0:
+                images = None  # captured one at a time below, so the delay is actually honoured
             else:
-                image = images[idx]
+                images = self.instr_camera.snap_photos(n_frames, timeout_ms=int(frame_timeout))
 
-            full_scale = float(np.iinfo(image.dtype).max)
+            image = None
+            for idx in range(n_frames):
+                if images is None:
+                    if idx > 0:
+                        sleep(frame_delay)
+                    image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+                else:
+                    image = images[idx]
 
-            # every selected format gets the same frame, so a TIFF and its PNG are the same shot
-            frame_files = []
-            base_name = "{:s}_frame{:03d}".format(stem, idx)
+                full_scale = float(np.iinfo(image.dtype).max)
 
-            if save_tiff:
-                frame_files.append(os.path.basename(self.instr_camera.save_photo(
-                    os.path.join(directory, base_name + '.tif'), image=image)))
-            if save_png:
-                # stretched to fill 8 bits, so it is viewable whatever the pixel format. The TIFF
-                # or NPY alongside it carries the counts; a raw Mono12 PNG would be nearly black.
-                frame_files.append(os.path.basename(self.instr_camera.save_photo(
-                    os.path.join(directory, base_name + '.png'),
-                    image=self.instr_camera.stretch_to_8bit(image))))
-            if save_npy:
-                frame_files.append(os.path.basename(self.instr_camera.save_photo_raw(
-                    os.path.join(directory, base_name + '.npy'), image=image)))
+                # every selected format gets the same frame, so a TIFF and its PNG are one shot
+                frame_files = []
+                base_name = "{:s}_frame{:03d}".format(stem, idx)
 
-            frame_indices.append(int(idx))
-            timestamps.append(datetime.now(timezone.utc).isoformat())
-            file_names.append(frame_files)
-            # convert numpy float64 to python float, otherwise the result file is not serialisable
-            mean_counts.append(float(np.mean(image)))
-            min_counts.append(float(np.min(image)))
-            max_counts.append(float(np.max(image)))
-            std_counts.append(float(np.std(image)))
-            saturated_fractions.append(float(np.count_nonzero(image >= full_scale) / image.size))
+                if save_tiff:
+                    frame_files.append(os.path.basename(self.instr_camera.save_photo(
+                        os.path.join(directory, base_name + '.tif'), image=image)))
+                if save_png:
+                    # stretched to fill 8 bits, so it is viewable whatever the pixel format. The
+                    # TIFF or NPY alongside it carries the counts; a raw Mono12 PNG is near black.
+                    frame_files.append(os.path.basename(self.instr_camera.save_photo(
+                        os.path.join(directory, base_name + '.png'),
+                        image=self.instr_camera.stretch_to_8bit(image))))
+                if save_npy:
+                    frame_files.append(os.path.basename(self.instr_camera.save_photo_raw(
+                        os.path.join(directory, base_name + '.npy'), image=image)))
+
+                frame_indices.append(int(idx))
+                timestamps.append(datetime.now(timezone.utc).isoformat())
+                file_names.append(frame_files)
+                # numpy float64 -> python float, else the result file is not serialisable
+                mean_counts.append(float(np.mean(image)))
+                min_counts.append(float(np.min(image)))
+                max_counts.append(float(np.max(image)))
+                std_counts.append(float(np.std(image)))
+                saturated_fractions.append(
+                    float(np.count_nonzero(image >= full_scale) / image.size))
 
         # data['values'] must hold numeric series only: LabExT plots every one of them, and
         # PlotControl runs np.isfinite over the y data, which raises on strings. The file names and
@@ -346,6 +372,10 @@ class CameraSnapshot(Measurement):
         data['measurement settings']['image shape'] = [int(v) for v in image.shape]
         data['measurement settings']['image dtype'] = str(image.dtype)
         data['measurement settings']['image directory'] = directory
+        # recorded so a dark-looking frame can be told apart from a dark chip without guessing
+        data['measurement settings']['laser on during capture'] = bool(laser_enabled)
+
+        self.instr_laser.close()
 
         if close_camera:
             self.instr_camera.close()
