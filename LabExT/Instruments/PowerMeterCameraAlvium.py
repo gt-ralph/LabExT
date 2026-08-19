@@ -599,7 +599,7 @@ class PowerMeterCameraAlvium(Instrument):
         total = float(np.mean([self._integrate(frame) for frame in frames]))
         if self._merit_unit == 'counts':
             return total
-        if total <= 0.0:
+        if total <= 0.0:  # noqa: keep the debug line below; counts_to_db alone would be silent
             # A finite floor rather than -inf or an exception. -inf would make the Gaussian fit
             # produce NaNs and would trip the search's finite-value guard, throwing away the whole
             # axis, and a scan legitimately starts with no signal at all. One count is 0 dB, so
@@ -638,6 +638,32 @@ class PowerMeterCameraAlvium(Instrument):
                 "full sensor.".format(x, y, w, h, width, height))
         return x, y, w, h
 
+    @staticmethod
+    def integrate_patch(patch, dark_patch=None, clip_negative=False):
+        """Sum a region's counts, with the dark reference removed. Never raises.
+
+        Shared with the live Camera View so the number shown there is the number a search acts on,
+        computed the same way rather than by a lookalike that can drift.
+
+        Note the explicit float64: numpy sums integer arrays in the platform's default integer,
+        which is uint32 on Windows, and a full-sensor Mono12 frame sums past 2**32.
+        """
+        patch = np.asarray(patch)
+        if dark_patch is None:
+            return float(patch.sum(dtype=np.float64))
+
+        values = patch.astype(np.float64) - np.asarray(dark_patch, dtype=np.float64)
+        if clip_negative:
+            np.clip(values, 0.0, None, out=values)
+        return float(values.sum(dtype=np.float64))
+
+    @classmethod
+    def counts_to_db(cls, total):
+        """`10*log10(counts)`, floored rather than returning -inf for a non-positive sum."""
+        if total <= 0.0:
+            return MINIMUM_DB
+        return 10.0 * math.log10(total)
+
     def _integrate(self, image):
         """Sum the counts in the integration ROI of one frame, with the dark reference removed."""
         image = np.asarray(image)
@@ -660,15 +686,11 @@ class PowerMeterCameraAlvium(Instrument):
                 "capture a new dark reference.".format(
                     saturated, patch.size, fraction, level, self.pixel_format))
 
-        # dtype=np.float64 is not tidiness: numpy sums integer arrays in the platform's default
-        # integer, which is uint32 on Windows, and a full-frame Mono12 sum passes 2**32
-        if self._dark_reference is not None:
-            values = patch.astype(np.float64) - self._dark_reference[y:y + h, x:x + w]
-            if self._clip_negative:
-                np.clip(values, 0.0, None, out=values)
-            total = float(values.sum(dtype=np.float64))
-        else:
-            total = float(patch.sum(dtype=np.float64))
+        total = self.integrate_patch(
+            patch,
+            dark_patch=None if self._dark_reference is None
+            else self._dark_reference[y:y + h, x:x + w],
+            clip_negative=self._clip_negative)
 
         self._last_statistics = {
             'roi sum': total,

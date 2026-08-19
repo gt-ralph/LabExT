@@ -87,6 +87,7 @@ class CameraViewWindow(Toplevel):
         self._pending_gain = None
 
         self._display_bit_depth = 8
+        self._integration_dark_reference = None
 
         self.title("Camera View")
         self.geometry('+%d+%d' % (self.winfo_screenwidth() / 8, self.winfo_screenheight() / 8))
@@ -94,6 +95,7 @@ class CameraViewWindow(Toplevel):
 
         self._build_widgets()
         self._load_settings()
+        self._reload_integration_dark_reference()
         self._update_button_states()
         self.lift()
 
@@ -130,6 +132,7 @@ class CameraViewWindow(Toplevel):
         self._build_display_controls(controls)
         self._build_save_controls(controls)
         self._build_integration_roi_controls(controls)
+        self._build_integration_readout(controls)
         self._build_dark_reference_controls(controls)
         self._build_histogram(controls)
 
@@ -256,6 +259,79 @@ class CameraViewWindow(Toplevel):
         self._save_button.grid(row=4, column=0, columnspan=4, sticky='we', pady=(4, 0))
 
         frame.columnconfigure(1, weight=1)
+
+    def _build_integration_readout(self, parent):
+        frame = CustomFrame(parent)
+        frame.title = " Integrated Intensity "
+        frame.pack(side=TOP, fill=X, pady=2)
+
+        for column, heading in enumerate(('', 'counts', 'dB')):
+            Label(frame, text=heading, anchor='w' if column == 0 else 'e').grid(
+                row=0, column=column, sticky='we', padx=2)
+
+        self._integration_readout_vars = {}
+        for row, region in enumerate(('ROI', 'Frame'), start=1):
+            Label(frame, text=region, anchor='w').grid(row=row, column=0, sticky='w', padx=2)
+            counts_var, db_var = StringVar(self, value='-'), StringVar(self, value='-')
+            Label(frame, textvariable=counts_var, anchor='e', width=12).grid(
+                row=row, column=1, sticky='e', padx=2)
+            Label(frame, textvariable=db_var, anchor='e', width=8).grid(
+                row=row, column=2, sticky='e', padx=2)
+            self._integration_readout_vars[region] = (counts_var, db_var)
+
+        self._integration_readout_note_var = StringVar(self, value="")
+        Label(frame, textvariable=self._integration_readout_note_var, anchor='w', justify=LEFT,
+              wraplength=240).grid(row=3, column=0, columnspan=3, sticky='we')
+        frame.columnconfigure(1, weight=1)
+
+    def _update_integration_readout(self, frame):
+        """Show what the camera-backed power meter would report for this frame.
+
+        Computed with the instrument's own helper, and with the same dark reference, so this is
+        the number a search acts on rather than an independent approximation of it.
+        """
+        dark = self._integration_dark_reference
+        if dark is not None and dark.shape != frame.shape:
+            # a changed pixel format or camera ROI invalidates it; the instrument refuses outright
+            dark = None
+
+        whole = PowerMeterCameraAlvium.integrate_patch(frame, dark_patch=dark)
+
+        x, y, width, height = self._read_integration_roi()
+        if width and height and x + width <= frame.shape[1] and y + height <= frame.shape[0]:
+            patch = frame[y:y + height, x:x + width]
+            dark_patch = None if dark is None else dark[y:y + height, x:x + width]
+            roi_total = PowerMeterCameraAlvium.integrate_patch(patch, dark_patch=dark_patch)
+            roi_label = "{:.4g}".format(roi_total)
+            roi_db = "{:.1f}".format(PowerMeterCameraAlvium.counts_to_db(roi_total))
+        else:
+            roi_label, roi_db = 'whole frame', '-'
+            roi_total = whole
+
+        self._integration_readout_vars['ROI'][0].set(roi_label)
+        self._integration_readout_vars['ROI'][1].set(roi_db)
+        self._integration_readout_vars['Frame'][0].set("{:.4g}".format(whole))
+        self._integration_readout_vars['Frame'][1].set(
+            "{:.1f}".format(PowerMeterCameraAlvium.counts_to_db(whole)))
+
+        if dark is None:
+            self._integration_readout_note_var.set(
+                "No dark reference applied, so these include the sensor background.")
+        else:
+            share = (roi_total / whole * 100.0) if whole else 0.0
+            self._integration_readout_note_var.set(
+                "Dark reference subtracted. The ROI holds {:.1f}% of the frame's signal.".format(
+                    share))
+
+    def _reload_integration_dark_reference(self):
+        """Cache the dark reference the readout subtracts, matching what the instrument uses."""
+        try:
+            image_path, _ = PowerMeterCameraAlvium.dark_reference_paths()
+            self._integration_dark_reference = (
+                np.load(image_path).astype(np.float64) if os.path.isfile(image_path) else None)
+        except Exception:
+            self.logger.debug("Could not load the dark reference for the readout.", exc_info=True)
+            self._integration_dark_reference = None
 
     def _build_integration_roi_controls(self, parent):
         frame = CustomFrame(parent)
@@ -464,6 +540,7 @@ class CameraViewWindow(Toplevel):
 
         self.logger.info("Captured dark reference: %s", metadata)
         self._refresh_dark_reference_status()
+        self._reload_integration_dark_reference()
         self._status_var.set(
             "Dark reference captured from {:d} frames, mean {:.2f} counts. Unblock the beam.".format(
                 frames, float(metadata.get('mean level', 0.0))))
@@ -622,6 +699,7 @@ class CameraViewWindow(Toplevel):
                 self._update_status(frame)
                 if self._tick_count % self.HISTOGRAM_TICK_DIVIDER == 0:
                     self._update_histogram(frame)
+                    self._update_integration_readout(frame)
                 if str(self._save_button['state']) == DISABLED:
                     self._save_button.config(state=NORMAL)
 
