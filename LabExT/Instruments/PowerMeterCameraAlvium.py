@@ -30,6 +30,23 @@ DEFAULT_SATURATION_FRACTION_LIMIT = 1e-4
 #: how many trigger() calls between re-reads of the camera's exposure and gain
 DEFAULT_SETTINGS_CHECK_INTERVAL = 20
 
+#: ROI half-width as a multiple of the fitted spot radius. Measured against a real frame from the
+#: setup: 0.75 gives 96.8% contrast between aligned and dark, 1.25 gives 95.3%, 2.0 gives 91.2%. A
+#: wider box collects more of the beam but proportionally more background, and contrast is what a
+#: peak search needs - it never reports absolute power, so capturing all the light buys nothing.
+ROI_SPOT_RADIUS_FACTOR = 1.25
+
+#: The spot radius is taken as this percentile of the distance from the peak to the pixels above
+#: half maximum. Not the maximum: on a real frame those distances run 19 px median, 36 px at the
+#: 90th percentile and 328 px at the extreme, so a single stray bright pixel elsewhere would
+#: stretch the ROI across the sensor.
+ROI_SPOT_RADIUS_PERCENTILE = 90
+
+#: A fitted radius beyond this fraction of the shorter frame side means no compact spot was found.
+#: With a beam the radius is ~36 px; on a frame with the laser off the half-maximum pixels scatter
+#: and it grows to ~518 px, which would otherwise be accepted as a whole-frame ROI.
+ROI_MAX_RADIUS_FRACTION = 0.125
+
 
 class PowerMeterCameraAlvium(Instrument):
     """
@@ -269,6 +286,82 @@ class PowerMeterCameraAlvium(Instrument):
     @unit.setter
     def unit(self, value):
         self._merit_unit = self._normalised_unit(value)
+
+    @classmethod
+    def fit_roi_to_spot(cls, image, dark_reference=None):
+        """Find the beam spot and propose an integration ROI around it.
+
+        Lives on the instrument rather than in the Camera View because a search has to do this
+        headlessly, once per pass, with no GUI in the loop.
+
+        Arguments:
+            image (numpy.ndarray): the frame to fit against
+            dark_reference (numpy.ndarray): subtracted when its shape matches, so the fit sees the
+                same image the meter integrates; otherwise the frame median stands in for it
+
+        Returns:
+            tuple: `([x, y, width, height], note)`, with the ROI None when there is no compact spot
+        """
+        image = np.asarray(image, dtype=np.float64)
+        if image.ndim != 2:
+            return None, "expected a 2D monochrome frame, got shape {!s}".format(image.shape)
+
+        if dark_reference is not None and np.shape(dark_reference) == image.shape:
+            above = image - np.asarray(dark_reference, dtype=np.float64)
+            baseline = "dark reference"
+        else:
+            above = image - float(np.median(image))
+            baseline = "frame median"
+
+        peak = float(above.max())
+        if peak <= 0.0:
+            return None, "the frame is flat, so there is no spot to fit to"
+
+        centre_y, centre_x = (int(v) for v in np.argwhere(above == peak)[0])
+        rows, columns = np.nonzero(above >= 0.5 * peak)
+        radius = int(ROI_SPOT_RADIUS_FACTOR * np.percentile(
+            np.hypot(columns - centre_x, rows - centre_y), ROI_SPOT_RADIUS_PERCENTILE))
+        radius = max(4, radius)
+
+        height, width = image.shape
+        if radius > ROI_MAX_RADIUS_FRACTION * min(height, width):
+            return None, (
+                "no compact spot: the bright pixels are spread over {:d} px, more than {:.0%} of the "
+                "frame, which is what an image with no beam looks like".format(
+                    radius, ROI_MAX_RADIUS_FRACTION))
+
+        x = max(0, centre_x - radius)
+        y = max(0, centre_y - radius)
+        roi = [x, y, min(width - x, 2 * radius), min(height - y, 2 * radius)]
+        return roi, "spot at ({:d}, {:d}), {:.0f} counts above the {:s}".format(
+            centre_x, centre_y, peak, baseline)
+
+    def autofit_integration_roi(self):
+        """Fit the integration ROI to the beam in a freshly acquired frame.
+
+        Falls back to the whole frame when no spot is found. That is deliberate rather than an
+        error: the whole frame still shows ~23% contrast on this setup, enough for a coarse pass to
+        pull in a beam that landed badly, and the next pass can then fit tightly.
+
+        Returns:
+            dict: `{'fitted': bool, 'roi': [x, y, w, h], 'note': str}`, for the caller to log and
+                record with the measurement
+        """
+        try:
+            frames = self._acquire(1)
+        except Exception as exc:
+            self.logger.exception("Could not acquire a frame to fit the integration ROI.")
+            return {'fitted': False, 'roi': self.roi,
+                    'note': "could not acquire a frame: {!r}".format(exc)}
+
+        roi, note = self.fit_roi_to_spot(frames[0], dark_reference=self._dark_reference)
+        if roi is None:
+            self.roi = [0, 0, 0, 0]
+            return {'fitted': False, 'roi': self.roi,
+                    'note': note + "; summing the whole frame for this pass"}
+
+        self.roi = roi
+        return {'fitted': True, 'roi': list(roi), 'note': note}
 
     @classmethod
     def integration_roi_path(cls):

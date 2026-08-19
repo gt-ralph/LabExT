@@ -317,11 +317,24 @@ class CameraViewWindow(Toplevel):
         if dark is None:
             self._integration_readout_note_var.set(
                 "No dark reference applied, so these include the sensor background.")
+            return
+
+        # How much of what the ROI sums is actually signal. This is what predicts search contrast,
+        # unlike the ROI's share of the frame, which is low for a good tight ROI and reads as a
+        # problem when it is not.
+        x, y, width, height = self._read_integration_roi()
+        if width and height and x + width <= frame.shape[1] and y + height <= frame.shape[0]:
+            raw = float(np.asarray(frame[y:y + height, x:x + width]).sum(dtype=np.float64))
         else:
-            share = (roi_total / whole * 100.0) if whole else 0.0
-            self._integration_readout_note_var.set(
-                "Dark reference subtracted. The ROI holds {:.1f}% of the frame's signal.".format(
-                    share))
+            raw = float(np.asarray(frame).sum(dtype=np.float64))
+        ratio = (roi_total / raw * 100.0) if raw else 0.0
+
+        note = "Dark reference subtracted. {:.0f}% of what the ROI sums is signal".format(ratio)
+        if ratio < 50.0:
+            note += " - the ROI is loose, so a search will see little contrast. Try Fit to spot."
+        else:
+            note += ", which is what a search resolves a peak from."
+        self._integration_readout_note_var.set(note)
 
     def _reload_integration_dark_reference(self):
         """Cache the dark reference the readout subtracts, matching what the instrument uses."""
@@ -406,40 +419,32 @@ class CameraViewWindow(Toplevel):
         self._status_var.set("Integration ROI saved; the peak search will use it on its next run.")
 
     def _on_fit_integration_roi_to_spot(self):
-        """Centre a ROI on the brightest part of the current frame.
+        """Fit the ROI to the beam in the current frame.
 
-        A starting point rather than a final answer: it sizes the box from where the intensity
-        falls away, which is a reasonable guess for a single spot and nonsense for a scene with
-        several bright features.
+        Uses the instrument's own fitter, which is the same one a Search for Peak runs before every
+        pass, so what you check here by eye is what an unattended run will do.
         """
         frame = self._displayed_frame
         if frame is None:
             messagebox.showinfo("No image", "Start the preview first.", parent=self)
             return
 
-        background = float(np.median(frame))
-        above = np.asarray(frame, dtype=np.float64) - background
-        peak = float(above.max())
-        if peak <= 0:
-            messagebox.showinfo("No spot found",
-                                "The image is flat, so there is no spot to fit to.", parent=self)
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(
+            frame, dark_reference=self._integration_dark_reference)
+        if roi is None:
+            messagebox.showinfo(
+                "No spot found",
+                "Could not fit a region to a beam: " + note + ".\n\nThe search falls back to the "
+                "whole frame in this situation, which still works but with much less contrast.",
+                parent=self)
             return
 
-        # everything at more than half the peak counts as the spot, padded to give it room
-        rows, columns = np.nonzero(above >= 0.5 * peak)
-        pad_y = max(4, int(0.5 * (rows.max() - rows.min() + 1)))
-        pad_x = max(4, int(0.5 * (columns.max() - columns.min() + 1)))
-        x = max(0, int(columns.min()) - pad_x)
-        y = max(0, int(rows.min()) - pad_y)
-        width = min(frame.shape[1] - x, int(columns.max() - columns.min() + 1) + 2 * pad_x)
-        height = min(frame.shape[0] - y, int(rows.max() - rows.min() + 1) + 2 * pad_y)
-
-        for key, value in zip(('x', 'y', 'width', 'height'), (x, y, width, height)):
+        for key, value in zip(('x', 'y', 'width', 'height'), roi):
             self._integration_roi_vars[key].set(str(int(value)))
         self._describe_integration_roi()
         self._draw_integration_roi()
         self._status_var.set(
-            "Fitted a {:d}x{:d} ROI to the spot. Press Apply to use it.".format(width, height))
+            "Fitted a {:d}x{:d} ROI: {:s}. Press Apply to use it.".format(roi[2], roi[3], note))
 
     def _draw_integration_roi(self):
         """Outline the integration ROI on the preview, in frame pixels mapped to canvas pixels."""

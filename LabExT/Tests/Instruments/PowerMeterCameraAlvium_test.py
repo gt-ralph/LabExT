@@ -330,6 +330,94 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         self.assertAlmostEqual(meter.fetch_power(), 7.0 * 16, places=6)
 
     #
+    # fitting the integration ROI to the beam
+    #
+    # These run against two frames captured on the real setup, one with the laser on at good
+    # alignment and one with it off. That pairing is what makes contrast measurable, and it catches
+    # a fit that looks plausible but sums far too much background: the earlier half-maximum bounding
+    # box scored 53.6% here against the ~95% actually available.
+
+    @staticmethod
+    def _load_beam_frames():
+        from PIL import Image
+        fixtures = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Fixtures')
+        on = np.array(Image.open(os.path.join(fixtures, 'beam_laser_on.tif')))
+        off = np.array(Image.open(os.path.join(fixtures, 'beam_laser_off.tif')))
+        return on.astype(np.float64), off.astype(np.float64)
+
+    @staticmethod
+    def _contrast(on, off, roi):
+        x, y, width, height = roi
+        lit = on[y:y + height, x:x + width].sum()
+        dark = off[y:y + height, x:x + width].sum()
+        return (lit - dark) / lit
+
+    def test_fitted_roi_gives_high_contrast_on_a_real_beam(self):
+        on, off = self._load_beam_frames()
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(on)
+        self.assertIsNotNone(roi, note)
+
+        contrast = self._contrast(on, off, roi)
+        self.assertGreaterEqual(contrast, 0.90, "ROI {!s} only reaches {:.1%}".format(roi, contrast))
+        # and it must be a genuinely tight box, not most of the sensor
+        self.assertLess(roi[2], on.shape[1] // 4)
+        self.assertLess(roi[3], on.shape[0] // 4)
+
+    def test_whole_frame_is_much_worse_than_the_fitted_roi(self):
+        """Documents why this matters: the whole frame is the failure that prompted the work."""
+        on, off = self._load_beam_frames()
+        whole = self._contrast(on, off, [0, 0, on.shape[1], on.shape[0]])
+        fitted = self._contrast(on, off, PowerMeterCameraAlvium.fit_roi_to_spot(on)[0])
+        self.assertLess(whole, 0.30)
+        self.assertGreater(fitted, 3 * whole)
+
+    def test_fit_uses_the_dark_reference_when_it_matches(self):
+        on, off = self._load_beam_frames()
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(on, dark_reference=off)
+        self.assertIsNotNone(roi, note)
+        self.assertIn("dark reference", note)
+        self.assertGreaterEqual(self._contrast(on, off, roi), 0.90)
+
+    def test_frame_without_a_beam_is_refused(self):
+        _, off = self._load_beam_frames()
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(off)
+        self.assertIsNone(roi, "a frame with the laser off must not yield an ROI")
+        self.assertIn("no compact spot", note)
+
+    def test_pure_noise_is_refused(self):
+        rng = np.random.default_rng(0)
+        noise = rng.integers(2, 6, size=(256, 320)).astype(np.uint8)
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(noise)
+        self.assertIsNone(roi, note)
+
+    def test_flat_frame_is_refused(self):
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(np.zeros((64, 64), dtype=np.uint8))
+        self.assertIsNone(roi)
+        self.assertIn("flat", note)
+
+    def test_autofit_applies_the_roi_and_reports_it(self):
+        on, _ = self._load_beam_frames()
+        meter = make_meter(StubCamera([on.astype(np.uint8)]))
+        meter.open()
+
+        outcome = meter.autofit_integration_roi()
+        self.assertTrue(outcome['fitted'], outcome['note'])
+        self.assertEqual(meter.roi, outcome['roi'])
+        self.assertLess(outcome['roi'][2], on.shape[1] // 4)
+
+    def test_autofit_falls_back_to_the_whole_frame_without_a_beam(self):
+        _, off = self._load_beam_frames()
+        meter = make_meter(StubCamera([off.astype(np.uint8)]),
+                           roi_x=10, roi_y=10, roi_width=20, roi_height=20)
+        meter.open()
+
+        outcome = meter.autofit_integration_roi()
+        self.assertFalse(outcome['fitted'])
+        # the whole frame still shows usable contrast, so a coarse pass can pull a beam into view
+        self.assertEqual(meter.roi, [0, 0, 0, 0])
+        self.assertIn("whole frame", outcome['note'])
+
+    #
     # acquisition protocol
     #
 

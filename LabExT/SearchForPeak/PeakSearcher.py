@@ -365,6 +365,44 @@ class PeakSearcher(Measurement):
         self._merit_is_linear = bool(camera_backed) and all(camera_backed) and merit_unit == 'counts'
         self._merit_unit_label = merit_unit if (camera_backed and all(camera_backed)) else 'dBm'
 
+    def _fit_camera_rois(self, pass_name, results):
+        """Aim each camera-backed meter's integration region at the beam, once for this pass.
+
+        Done per pass rather than per scan point on purpose. If the region followed the spot from
+        point to point the sum would track the spot instead of the coupling, flattening the very
+        contrast the search depends on, so it is fitted once here and then held fixed for the whole
+        pass. Doing it per pass is also what lets an automated run walk a grating array: each device
+        emits into a different part of the frame and gets its own region with no hand setup.
+
+        A pass that finds no beam falls back to the whole frame, which still carries usable contrast
+        and can pull a badly-landed beam into view for the next pass to fit properly.
+        """
+        for meter in self.instr_powermeters:
+            if not getattr(type(meter), 'IS_CAMERA_BACKED', False):
+                continue
+
+            # IS_CAMERA_BACKED says the meter reports counts, not that it can aim itself; one that
+            # cannot simply keeps whatever region it was configured with
+            autofit = getattr(meter, 'autofit_integration_roi', None)
+            if autofit is None:
+                self.logger.debug(
+                    "%s does not support fitting its integration region; leaving it as configured.",
+                    type(meter).__name__)
+                continue
+
+            outcome = autofit()
+            record = {'pass': pass_name, **outcome}
+            results.setdefault('camera integration roi', []).append(record)
+
+            if outcome['fitted']:
+                self.logger.info(
+                    "%s pass: integration ROI fitted to %s - %s",
+                    pass_name, outcome['roi'], outcome['note'])
+            else:
+                self.logger.warning(
+                    "%s pass: could not fit the integration ROI (%s). Contrast will be low; if this "
+                    "persists, check the beam is reaching the camera.", pass_name, outcome['note'])
+
     @property
     def merit_axis_label(self):
         """Axis label for the scan traces, following what the selected detectors report."""
@@ -559,6 +597,11 @@ class PeakSearcher(Measurement):
                     self.logger.debug(f"Start Position: {start_coordinates}")
 
                     estimated_through_power = -99.0
+
+                    # Point any camera-backed meter at the beam before this pass reads anything.
+                    # Must happen before the start power below, or that reference would be on the
+                    # previous region's scale while the scan runs on the new one.
+                    self._fit_camera_rois(pass_name, results)
 
                     # get start statistics
                     results['start location'] = start_coordinates.copy()
