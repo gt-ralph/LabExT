@@ -230,10 +230,24 @@ class CameraSnapshot(Measurement):
         # open connection to the camera
         self.instr_camera.open()
 
-        # apply settings. The order matters: changing the pixel format or the ROI can move the
+        # Apply settings. The order matters: changing the pixel format or the ROI can move the
         # limits of the other features, so those go first.
-        self.instr_camera.pixel_format = pixel_format
-        self.instr_camera.set_roi(*roi)
+        #
+        # The camera fixes its frame layout once acquisition starts, so with the live Camera View
+        # streaming these two cannot be changed. Rather than failing the run - which would abort
+        # every device in a multi-device experiment - the frames are captured in whatever layout
+        # the stream is already producing, and the read-back below records what was actually used.
+        try:
+            self.instr_camera.pixel_format = pixel_format
+            self.instr_camera.set_roi(*roi)
+        except Exception as exc:
+            if not getattr(self.instr_camera, 'is_streaming', False):
+                raise
+            self.logger.warning(
+                "Keeping the camera's current pixel format and ROI (%s, %s) because it is "
+                "streaming: %s. Stop the live Camera View if this measurement needs %s at %s.",
+                self.instr_camera.pixel_format, self.instr_camera.roi, exc, pixel_format, roi)
+
         self.instr_camera.exposure_time = exposure_time
         self.instr_camera.gain = gain
 
