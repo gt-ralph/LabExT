@@ -23,6 +23,7 @@ import unittest
 import numpy as np
 
 from LabExT.Instruments.CameraAlliedVisionAlvium import CameraAlliedVisionAlvium
+from LabExT.Instruments.InstrumentAPI import InstrumentException
 from LabExT.Tests.Utils import mark_as_laboratory_test
 
 
@@ -345,3 +346,69 @@ class CameraAlliedVisionAlviumTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@mark_as_laboratory_test
+class CameraAlliedVisionAlviumStreamingSettingsTest(unittest.TestCase):
+    """Changing frame-layout settings while the camera streams.
+
+    The camera locks the pixel format and the sensor ROI once acquisition starts, so re-applying a
+    value that already matches must be a no-op rather than a failure. A multi-device run of
+    CameraSnapshot with the live view open failed on exactly this: every device tried to set the
+    pixel format it was already at.
+    """
+
+    camera_id = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.instr = CameraAlliedVisionAlvium(visa_address="None", camera_id=cls.camera_id)
+        cls.instr.open()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.instr.stop_streaming()
+        cls.instr.close()
+
+    def setUp(self) -> None:
+        self.instr.stop_streaming()
+        self.instr.pixel_format = 'Mono8'
+        self.instr.set_roi(0, 0, 0, 0)
+
+    def _start_stream(self):
+        self.instr.start_streaming()
+        self.addCleanup(self.instr.stop_streaming)
+
+    def test_reapplying_the_same_pixel_format_while_streaming_is_a_no_op(self):
+        self._start_stream()
+        self.instr.pixel_format = 'Mono8'          # must not raise
+        self.assertEqual(self.instr.pixel_format, 'Mono8')
+
+    def test_changing_the_pixel_format_while_streaming_is_refused_clearly(self):
+        self._start_stream()
+        with self.assertRaises(InstrumentException) as ctx:
+            self.instr.pixel_format = 'Mono12'
+        self.assertIn("streaming", str(ctx.exception))
+        self.assertIn("Camera View", str(ctx.exception))
+
+    def test_reapplying_the_same_roi_while_streaming_is_a_no_op(self):
+        self._start_stream()
+        self.assertEqual(self.instr.set_roi(0, 0, 0, 0), self.instr.roi)
+
+    def test_changing_the_roi_while_streaming_is_refused_clearly(self):
+        self._start_stream()
+        with self.assertRaises(InstrumentException) as ctx:
+            self.instr.set_roi(640, 480, 0, 0)
+        self.assertIn("streaming", str(ctx.exception))
+
+    def test_exposure_and_gain_still_change_while_streaming(self):
+        self._start_stream()
+        self.instr.exposure_time = 15000.0
+        self.instr.gain = 2.0
+        self.assertAlmostEqual(self.instr.exposure_time, 15000.0, delta=50.0)
+        self.assertAlmostEqual(self.instr.gain, 2.0, places=2)
+
+    def test_settings_still_change_when_not_streaming(self):
+        self.instr.pixel_format = 'Mono12'
+        self.assertEqual(self.instr.pixel_format, 'Mono12')
+        self.assertEqual(self.instr.set_roi(640, 480, 0, 0)[:2], [640, 480])

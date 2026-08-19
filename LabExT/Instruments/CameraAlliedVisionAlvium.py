@@ -373,7 +373,11 @@ class CameraAlliedVisionAlvium(Instrument):
         # Auto exposure / auto gain silently override anything we write to ExposureTime / Gain.
         self._try_set('ExposureAuto', 'Off')
         self._try_set('GainAuto', 'Off')
-        self._try_set('AcquisitionMode', 'SingleFrame')
+        # Only when nothing is acquiring. A second instance opening onto a camera the live view is
+        # already streaming would otherwise log a failed write on every connect, and it has no
+        # business stopping the mode the running acquisition needs.
+        if not self._cam.is_streaming():
+            self._try_set('AcquisitionMode', 'SingleFrame')
 
         if self._throughput_limit is not None:
             self._try_set('DeviceLinkThroughputLimitMode', 'On')
@@ -445,12 +449,33 @@ class CameraAlliedVisionAlvium(Instrument):
         with self._cam_lock:
             if not self._open:
                 raise InstrumentException("Camera connection is not open.")
+
+            # Nothing to do, and worth checking first: the camera refuses to change this while it
+            # is streaming, so a redundant write would fail a measurement whose settings already
+            # match what the live view is showing.
+            if str(value) == str(self._cam.get_pixel_format()):
+                return
+
             available = self.available_pixel_formats
             if str(value) not in available:
                 raise InstrumentException(
                     "Pixel format '{:s}' is not supported by this camera. Available formats: "
                     "{:s}".format(str(value), ", ".join(available)))
+            self._require_not_streaming('the pixel format')
             self._cam.set_pixel_format(getattr(PixelFormat, str(value)))
+
+    def _require_not_streaming(self, what):
+        """Refuse a change the camera only accepts while acquisition is stopped.
+
+        Exposure and gain can be changed mid-stream; the pixel format and the sensor ROI cannot,
+        because they alter the size of the buffers already announced to the transport layer.
+        """
+        if not self._cam.is_streaming():
+            return
+        raise InstrumentException(
+            "Cannot change {:s} while the camera is streaming: the frame layout is fixed once "
+            "acquisition has started. Press Stop in the Camera View, or set it to the value you "
+            "want there so nothing needs changing.".format(what))
 
     @property
     def available_pixel_formats(self):
@@ -491,6 +516,15 @@ class CameraAlliedVisionAlvium(Instrument):
         """Full sensor size as `[width, height]` in pixels."""
         return [self._static_info.get('sensor width'), self._static_info.get('sensor height')]
 
+    def _roi_matches(self, width, height, offset_x, offset_y):
+        """Whether the camera is already at this ROI, with 0 meaning the sensor maximum."""
+        current_width, current_height, current_x, current_y = self.roi
+        sensor_width, sensor_height = self.sensor_size
+        wanted_width = int(width) if width else sensor_width
+        wanted_height = int(height) if height else sensor_height
+        return ([current_width, current_height, current_x, current_y]
+                == [wanted_width, wanted_height, int(offset_x), int(offset_y)])
+
     def set_roi(self, width=0, height=0, offset_x=0, offset_y=0):
         """Set the region of interest. Pass 0 for width or height to use the full sensor.
 
@@ -502,6 +536,12 @@ class CameraAlliedVisionAlvium(Instrument):
             list: the resulting ROI as `[width, height, offset_x, offset_y]`
         """
         with self._cam_lock:
+            # Skip a no-op, for the same reason as the pixel format: the camera locks these while
+            # streaming, so re-applying the ROI a measurement already agrees with must not fail it.
+            if self._roi_matches(width, height, offset_x, offset_y):
+                return self.roi
+            self._require_not_streaming('the sensor ROI')
+
             self._try_set('OffsetX', 0)
             self._try_set('OffsetY', 0)
 
