@@ -209,6 +209,29 @@ surrounding stage/power-meter/GUI infrastructure (fiber-array-to-PIC alignment).
       confusing prior art with a name that collides with `SearchForPeak/EdgeSearcher.py`.
 - [ ] Expose a cancel/abort control in the GUI for long-running multi-pass searches,
       given there's currently no timeout and no way to stop a search partway through.
+- [ ] **A saved instrument selection silently shadows `instruments.config`.** Editing a
+      config entry's `args` has no effect on any window that has already saved a
+      selection for it — the stale descriptor keeps winning, with nothing in the GUI or
+      the log indicating the config is being ignored. `InstrumentSelector.serialize`
+      stores the *whole* descriptor including `args`
+      (`LabExT/View/Controls/InstrumentSelector.py:212-224`), and on restore
+      `InstrumentRole.create_and_set` (`:38-58`) looks for it with
+      `find_dict_with_ignore(..., ignore_keys=['channel','channels'])`
+      (`LabExT/Utils.py:155`), which compares `args` exactly. Any config edit therefore
+      makes the saved descriptor *stop* matching, and the `existing_idx is None` branch
+      at `:52-54` appends it to the choice list and selects it — so the window offers a
+      phantom instrument that exists nowhere in `instruments.config`.
+      Cost a real debugging session on 2026-08-19: `PowerMeterCameraAlvium`'s config was
+      corrected to stop it forcing the camera's exposure, but the Search for Peak window
+      kept applying the old `exposure_time` from
+      `~/.labext/SearchForPeakPlotsWindows_instr_settings.json`, so the search kept
+      failing on a dark-reference mismatch that the config no longer explained.
+      Fix by matching on the identity fields only (`class` plus `visa`) and taking
+      `args` from the current config entry, keeping `args` in the comparison solely to
+      disambiguate entries that share a class and address — which is exactly the four
+      `PowerMeterKoheronPD10R` channels, distinguished only by `lj_port`, so that case
+      has to keep working. Failing that, at least warn when a saved descriptor has to be
+      appended because it matches nothing in the config.
 
 ## Proposed alternative search algorithms (future work)
 
