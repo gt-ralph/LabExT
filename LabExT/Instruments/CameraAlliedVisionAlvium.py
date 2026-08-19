@@ -383,25 +383,28 @@ class CameraAlliedVisionAlvium(Instrument):
             self._try_set('DeviceLinkThroughputLimitMode', 'On')
             self._try_set('DeviceLinkThroughputLimit', int(self._throughput_limit))
 
-        # Frame layout can only be set while acquisition is stopped. If something else already has
-        # this camera streaming - the live Camera View - then connecting must not try to impose the
-        # layout from this instrument's config: it cannot be applied, and a run that only wants to
-        # read frames has no reason to fail because a config key disagrees with what is on screen.
-        # Whatever the stream is producing is adopted instead, and the settings are recorded from
-        # the camera anyway, so the measurement still reports what it actually captured with.
-        streaming = self._cam.is_streaming()
-        if streaming and (self._startup_format or self._startup_roi):
-            self.logger.warning(
-                "Camera is already streaming, so its pixel format and ROI are kept as they are "
-                "(%s, %s) rather than set from this instrument's configuration. Stop the live "
-                "Camera View before connecting if the configured layout is required.",
-                self.pixel_format, self.roi)
-        else:
-            if self._startup_format:
-                self.pixel_format = self._startup_format
-            if self._startup_roi:
-                self.set_roi(*self._startup_roi)
+        # If something else already has this camera streaming - the live Camera View - then
+        # connecting must not impose this instrument's configured settings on it. The frame layout
+        # cannot be applied at all once acquisition has started, and while the camera does accept
+        # exposure and gain mid-stream, they belong to whoever started the acquisition: overwriting
+        # what the operator set in the live view silently invalidates any dark reference captured
+        # against it, which is worse than the layout case because nothing fails loudly. So whatever
+        # the stream is producing is adopted, and since the settings are read back from the camera
+        # anyway, a measurement still reports what it actually captured with.
+        if self._cam.is_streaming():
+            if (self._startup_format or self._startup_roi
+                    or self._startup_exposure is not None or self._startup_gain is not None):
+                self.logger.warning(
+                    "Camera is already streaming, so its settings are kept as they are (%s, ROI "
+                    "%s, %.1f us, %.2f dB) rather than set from this instrument's configuration. "
+                    "Stop the live Camera View before connecting if the configured settings are "
+                    "required.", self.pixel_format, self.roi, self.exposure_time, self.gain)
+            return
 
+        if self._startup_format:
+            self.pixel_format = self._startup_format
+        if self._startup_roi:
+            self.set_roi(*self._startup_roi)
         if self._startup_exposure is not None:
             self.exposure_time = float(self._startup_exposure)
         if self._startup_gain is not None:

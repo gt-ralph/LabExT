@@ -237,19 +237,23 @@ class CameraSnapshot(Measurement):
         # streaming these two cannot be changed. Rather than failing the run - which would abort
         # every device in a multi-device experiment - the frames are captured in whatever layout
         # the stream is already producing, and the read-back below records what was actually used.
-        try:
+        # Exposure and gain are held back for the same reason even though the camera would accept
+        # them mid-stream: a dark reference captured through the live view is only valid for the
+        # exposure it was taken at, so quietly re-exposing a streaming camera breaks the peak
+        # search rather than this measurement, which is the hardest kind of failure to trace back.
+        if getattr(self.instr_camera, 'is_streaming', False):
+            self.logger.warning(
+                "Camera is streaming, so this measurement captures with the live Camera View's "
+                "settings (%s, ROI %s, %.1f us, %.2f dB) rather than its own (%s, ROI %s, "
+                "%.1f us, %.2f dB). Stop the Camera View if the configured settings are required.",
+                self.instr_camera.pixel_format, self.instr_camera.roi,
+                self.instr_camera.exposure_time, self.instr_camera.gain,
+                pixel_format, roi, exposure_time, gain)
+        else:
             self.instr_camera.pixel_format = pixel_format
             self.instr_camera.set_roi(*roi)
-        except Exception as exc:
-            if not getattr(self.instr_camera, 'is_streaming', False):
-                raise
-            self.logger.warning(
-                "Keeping the camera's current pixel format and ROI (%s, %s) because it is "
-                "streaming: %s. Stop the live Camera View if this measurement needs %s at %s.",
-                self.instr_camera.pixel_format, self.instr_camera.roi, exc, pixel_format, roi)
-
-        self.instr_camera.exposure_time = exposure_time
-        self.instr_camera.gain = gain
+            self.instr_camera.exposure_time = exposure_time
+            self.instr_camera.gain = gain
 
         # read back what the camera actually accepted: both exposure and gain get snapped onto the
         # camera's increment grid, and the ROI onto its own. Writing these back means the saved
