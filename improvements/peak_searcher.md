@@ -209,6 +209,30 @@ surrounding stage/power-meter/GUI infrastructure (fiber-array-to-PIC alignment).
       confusing prior art with a name that collides with `SearchForPeak/EdgeSearcher.py`.
 - [ ] Expose a cancel/abort control in the GUI for long-running multi-pass searches,
       given there's currently no timeout and no way to stop a search partway through.
+- [ ] **Run a manually-started search off the GUI thread.**
+      `SearchForPeakPlotsWindowController.execute_sfp_manually` calls
+      `search_for_peak()` directly inside the button callback
+      (`LabExT/View/SearchForPeakPlotsWindow.py:551`), so the tkinter mainloop is
+      blocked for the entire search and every queued `after()` job starves until it
+      returns. `StandardExperiment` doesn't have this problem: its search
+      (`StandardExperiment.py:279`) runs inside the `"Experiment Runner"`
+      `KillableThread` (`LabExT/Model/ExperimentHandler.py:47`), leaving the mainloop
+      idle. Noticed 2026-08-19 as the live Camera View freezing during a manual search
+      but updating normally during a multi-device experiment; measured with an
+      equivalent `after()` loop, a 2 s search gets 10 ticks on the GUI thread vs. 50 in
+      a worker thread.
+      **Today this is cosmetic only** — the camera's frame slot is filled by vmbpy's own
+      SDK callback thread, so `PowerMeterCameraAlvium._acquire`'s `take_newer_than`
+      still returns genuinely fresh frames while the GUI is frozen; only the display
+      stalls. (Worth stating explicitly because the frozen preview was initially
+      mistaken for the searcher reusing a stale image — the real cause of that bug was
+      the whole-frame integration ROI, since fixed.) The same blocking is also why any
+      progress readout or abort button would be dead during a manual search, so this and
+      the cancel/abort item above want doing together.
+      Not a one-liner: the same callback drives the matplotlib plots
+      (`SearchForPeakPlotsWindow.py:565-572`) and `PeakSearcher` updates them as it
+      scans, so moving the search to a thread turns those into cross-thread canvas
+      writes that need marshalling back to the main thread via `after()`.
 - [ ] **A saved instrument selection silently shadows `instruments.config`.** Editing a
       config entry's `args` has no effect on any window that has already saved a
       selection for it — the stale descriptor keeps winning, with nothing in the GUI or
