@@ -245,7 +245,14 @@ def run_with_wait_window(tk_root, description: str, function):
     Use this as decorator to run the given function in a second thread and display a wait window.
     You must supply a description string.
     This function does not provide a return value.
+
+    Anything the function raises is re-raised here, on the calling thread, once the wait window
+    closes. Without that the exception would die inside the worker thread and every caller's
+    try/except around this call would be unreachable, so a failed operation would look like a
+    successful one - the stage setup wizard reported "Successfully connected" over a stage that
+    had not connected, and the wiggle and relative-move buttons failed silently.
     """
+    raised_in_thread = []
     new_window = Toplevel(tk_root)
     new_window.attributes('-topmost', 'true')
     prog = ttk.Progressbar(new_window, mode='indeterminate')
@@ -257,11 +264,16 @@ def run_with_wait_window(tk_root, description: str, function):
     def async_exec_func():
         try:
             function()
+        except BaseException as exc:
+            raised_in_thread.append(exc)
         finally:
             new_window.destroy()
 
     threading.Thread(target=async_exec_func, name="wait window: " + str(description)).start()
     tk_root.wait_window(new_window)
+
+    if raised_in_thread:
+        raise raised_in_thread[0]
 
 
 def try_to_lift_window(window):
