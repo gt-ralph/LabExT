@@ -830,6 +830,25 @@ class CameraAlliedVisionAlvium(Instrument):
         self.logger.info("Saved camera image to %s", file_path)
         return file_path
 
+    @staticmethod
+    def stretch_to_8bit(image, low_percentile=1.0, high_percentile=99.0):
+        """Rescale a frame to the full 8 bit range so it is viewable in any image viewer.
+
+        For looking at, not for measuring: the mapping depends on the frame's own content, so two
+        stretched images are not comparable to each other. Deeper formats need it, because Mono12
+        counts occupy the bottom sixteenth of a uint16 and render almost black otherwise.
+
+        Returns:
+            numpy.ndarray: uint8, same shape as the input
+        """
+        values = np.asarray(image, dtype=np.float32)
+        low, high = np.percentile(values, [low_percentile, high_percentile])
+        if high <= low:
+            # a flat frame has nothing to stretch; keep it black rather than amplifying noise
+            high = low + 1.0
+        scaled = (values - low) * (255.0 / (high - low))
+        return np.clip(scaled, 0.0, 255.0).astype(np.uint8)
+
     def save_photo_raw(self, file_path, image=None):
         """Write an image to a .npy file, preserving dtype and values exactly.
 

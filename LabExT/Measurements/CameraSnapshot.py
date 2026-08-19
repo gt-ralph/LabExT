@@ -47,8 +47,8 @@ class CameraSnapshot(Measurement):
       slightly from what was requested.
     * **gain**: Analog gain in dB, clamped and snapped in the same way.
     * **pixel format**: `Mono8` gives 8 bit data, `Mono10` and `Mono12` give 16 bit data. Deeper
-      formats carry more dynamic range but need a container that can hold it, so prefer the `tiff`
-      or `npy` file format with them.
+      formats carry more dynamic range but need a container that can hold it, so keep TIFF or NPY
+      on when using them.
     * **ROI width / ROI height / ROI offset x / ROI offset y**: Region of interest in pixels. Leave
       width and height at 0 to use the full sensor. A smaller ROI reads out faster.
     * **number of frames**: How many frames to capture in this measurement.
@@ -56,8 +56,13 @@ class CameraSnapshot(Measurement):
       the camera allows.
     * **frame timeout**: How long to wait for each frame in milliseconds. Must be longer than the
       exposure time.
-    * **image file format**: `png` and `tiff` write viewable images, `npy` writes a numpy array
-      preserving the raw counts exactly, `none` skips saving and records statistics only.
+    * **save TIFF / save PNG / save NPY**: Which formats to write for every captured frame. They are
+      independent, so a run can keep the data and something viewable side by side; with all three
+      off the measurement records statistics without writing any image.
+      TIFF and NPY hold the sensor counts unchanged and are the ones to measure from. The PNG is
+      stretched to fill 8 bits so it opens correctly in any viewer, which means it is a picture of
+      the frame rather than the frame itself - a raw Mono12 PNG would render almost black, since
+      those counts occupy the bottom sixteenth of a 16 bit range.
     * **image output directory**: Where to write the images. Leave empty to write them next to the
       measurement result file.
     * **close camera after measurement**: Leave off unless something else needs the camera. Keeping
@@ -105,7 +110,11 @@ class CameraSnapshot(Measurement):
             'number of frames': MeasParamInt(value=1),
             'inter-frame delay': MeasParamFloat(value=0.0, unit='s'),
             'frame timeout': MeasParamFloat(value=5000.0, unit='ms'),
-            'image file format': MeasParamList(options=['png', 'tiff', 'npy', 'none'], value='png'),
+            # Independent rather than one choice, so a run can keep the data and something
+            # viewable side by side. Untick them all to record statistics without writing images.
+            'save TIFF': MeasParamBool(value=True),
+            'save PNG': MeasParamBool(value=True),
+            'save NPY': MeasParamBool(value=False),
             'image output directory': MeasParamString(value=''),
             'close camera after measurement': MeasParamBool(value=False),
             'users comment': MeasParamString(value='')
@@ -152,7 +161,9 @@ class CameraSnapshot(Measurement):
         def_params = CameraSnapshot.get_default_parameter()
         return {
             'number of frames': def_params['number of frames'],
-            'image file format': def_params['image file format'],
+            'save TIFF': def_params['save TIFF'],
+            'save PNG': def_params['save PNG'],
+            'save NPY': def_params['save NPY'],
             'image output directory': def_params['image output directory'],
             'close camera after measurement': def_params['close camera after measurement'],
             'users comment': def_params['users comment']
@@ -200,7 +211,9 @@ class CameraSnapshot(Measurement):
         n_frames = parameters.get('number of frames').value
         frame_delay = parameters.get('inter-frame delay').value
         frame_timeout = parameters.get('frame timeout').value
-        file_format = parameters.get('image file format').value
+        save_tiff = parameters.get('save TIFF').value
+        save_png = parameters.get('save PNG').value
+        save_npy = parameters.get('save NPY').value
         output_directory = parameters.get('image output directory').value
         close_camera = parameters.get('close camera after measurement').value
 
@@ -270,19 +283,26 @@ class CameraSnapshot(Measurement):
 
             full_scale = float(np.iinfo(image.dtype).max)
 
-            file_name = ''
-            if file_format != 'none':
-                extension = '.tif' if file_format == 'tiff' else '.' + file_format
-                file_name = "{:s}_frame{:03d}{:s}".format(stem, idx, extension)
-                file_path = os.path.join(directory, file_name)
-                if file_format == 'npy':
-                    self.instr_camera.save_photo_raw(file_path, image=image)
-                else:
-                    self.instr_camera.save_photo(file_path, image=image)
+            # every selected format gets the same frame, so a TIFF and its PNG are the same shot
+            frame_files = []
+            base_name = "{:s}_frame{:03d}".format(stem, idx)
+
+            if save_tiff:
+                frame_files.append(os.path.basename(self.instr_camera.save_photo(
+                    os.path.join(directory, base_name + '.tif'), image=image)))
+            if save_png:
+                # stretched to fill 8 bits, so it is viewable whatever the pixel format. The TIFF
+                # or NPY alongside it carries the counts; a raw Mono12 PNG would be nearly black.
+                frame_files.append(os.path.basename(self.instr_camera.save_photo(
+                    os.path.join(directory, base_name + '.png'),
+                    image=self.instr_camera.stretch_to_8bit(image))))
+            if save_npy:
+                frame_files.append(os.path.basename(self.instr_camera.save_photo_raw(
+                    os.path.join(directory, base_name + '.npy'), image=image)))
 
             frame_indices.append(int(idx))
             timestamps.append(datetime.now(timezone.utc).isoformat())
-            file_names.append(file_name)
+            file_names.append(frame_files)
             # convert numpy float64 to python float, otherwise the result file is not serialisable
             mean_counts.append(float(np.mean(image)))
             min_counts.append(float(np.min(image)))
@@ -301,6 +321,7 @@ class CameraSnapshot(Measurement):
         data['values']['std counts'] = std_counts
         data['values']['saturated pixel fraction'] = saturated_fractions
 
+        # one list per frame, since a frame can now be written in several formats
         data['measurement settings']['image files'] = file_names
         data['measurement settings']['frame timestamps utc'] = timestamps
 
