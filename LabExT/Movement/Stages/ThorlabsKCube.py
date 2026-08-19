@@ -193,6 +193,15 @@ class ThorlabsKCube(Stage):
             """Waits until the channel stops moving"""
             self._stage.wait_move()
 
+        def close(self) -> None:
+            """Release this channel's USB handle.
+
+            Must actually happen: an FTDI device whose handle is never closed can be left unable
+            to report its serial number and description, at which point pylablib stops listing it
+            and opening it fails with 'Device Not Found' until the controller is power cycled.
+            """
+            self._stage.close()
+
     def __init__(self, address):
         super().__init__(address)
         self.channels = {}
@@ -223,6 +232,11 @@ class ThorlabsKCube(Stage):
             cfg_data = json.load(fp)
         self.motor_cfg = cfg_data['Mover']['ThorlabsKCube']
 
+        # start from empty: these are appended to below, so a retry after a failed connect would
+        # otherwise keep growing them and zip() would pair serial numbers with the wrong axes
+        self.axes = []
+        self.sns = []
+
         for stage in self.motor_cfg:
             if stage["axis"] == "X":
                 self.axes.append(Axis.X)
@@ -244,9 +258,17 @@ class ThorlabsKCube(Stage):
                         self.address))
 
             except Exception as e:
-                self.connected = False
+                # Release the channels that did open before giving up. Dropping the dict on the
+                # floor instead would leak their USB handles, and an FTDI device left open can
+                # stop reporting its serial number entirely - after which pylablib no longer
+                # lists it and connecting fails with 'Device Not Found' until it is power cycled.
                 self.handle = None
-                self.channels = {}
+                try:
+                    self.disconnect()
+                except Exception:
+                    self._logger.exception(
+                        'Could not release the already-open KCube channels after a failed connect.')
+                self.connected = False
 
                 raise e
             
@@ -255,9 +277,27 @@ class ThorlabsKCube(Stage):
     @assert_driver_loaded
     # @assert_stage_connected
     def disconnect(self) -> bool:
-        for ch in self.channels:
-            ch.close()
+        """Close every open channel and forget them.
+
+        Iterates the channels themselves, not the dict's keys - iterating `self.channels` yields
+        Axis enums, which have no close(), so this used to raise on the first one and never
+        released anything.
+        """
+        for axis, channel in list(self.channels.items()):
+            try:
+                channel.close()
+            except Exception as exc:
+                # keep going: one stuck channel must not strand the others still open
+                self._logger.warning(
+                    'Could not close %s channel of KCube at %s: %r', axis, self.address, exc)
+
+        self.channels = {}
+        # rebuilt from the config on the next connect(); leaving them would make a reconnect
+        # append to them and pair serial numbers with the wrong axes
+        self.axes = []
+        self.sns = []
         self.connected = False
+        return True
 
     @assert_driver_loaded
     # @assert_stage_connected
