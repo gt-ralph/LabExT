@@ -9,6 +9,7 @@ import contextlib
 import math
 import os
 import threading
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -40,6 +41,50 @@ NUMPY_SAFE_FORMATS = ('Mono8', 'Mono10', 'Mono12', 'Mono14', 'Mono16')
 PACKED_CONVERSION_TARGET = 'Mono16'
 
 DEFAULT_FRAME_TIMEOUT_MS = 5000
+
+
+class _StreamedFrameSlot:
+    """Holds the most recent streamed frame, with a counter so a reader can demand a fresh one.
+
+    Only the newest frame is kept: a preview wants the latest image, and a measurement wants one
+    taken after it finished moving. Neither is served by a backlog.
+    """
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._counter = 0
+        self._image = None
+
+    @property
+    def counter(self):
+        with self._condition:
+            return self._counter
+
+    def put(self, image):
+        with self._condition:
+            self._counter += 1
+            self._image = image
+            self._condition.notify_all()
+
+    def take_newer_than(self, counter, timeout_s):
+        """Block for a frame recorded after `counter`. Returns `(image, counter)`, image None on
+        timeout."""
+        deadline = time.monotonic() + timeout_s
+        with self._condition:
+            while self._counter <= counter:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return None, self._counter
+                self._condition.wait(remaining)
+            return self._image, self._counter
+
+
+#: Newest streamed frame per physical camera, keyed by camera id and shared across driver
+#: instances. Two instances of this class can address one camera - vmbpy reference counts the
+#: device - and this is what lets a second instance read the frames the first one is already
+#: streaming, rather than opening a competing acquisition the camera cannot serve.
+_STREAMED_FRAMES = {}
+_STREAMED_FRAMES_LOCK = threading.Lock()
 
 
 class CameraAlliedVisionAlvium(Instrument):
@@ -499,23 +544,64 @@ class CameraAlliedVisionAlvium(Instrument):
         """Whether a continuous acquisition is currently running."""
         return self._open and self._cam.is_streaming()
 
-    def start_streaming(self, handler, buffer_count=10):
-        """Start a continuous acquisition, delivering frames to `handler` on a vmbpy thread.
+    @property
+    def frame_slot(self):
+        """The shared newest-frame slot for this physical camera."""
+        camera_id = self._static_info.get('camera id') or str(self._cam_id)
+        with _STREAMED_FRAMES_LOCK:
+            return _STREAMED_FRAMES.setdefault(camera_id, _StreamedFrameSlot())
 
-        The handler is called as `handler(camera, stream, frame)` and **must** hand the buffer back
-        with `camera.queue_frame(frame)` when it is done, or the acquisition runs out of buffers and
-        stalls. Use `frame_to_array` to get a numpy array out of the frame; the array vmbpy provides
-        directly is only borrowed and must not outlive the callback.
+    def latest_streamed_frame(self, newer_than=None, timeout_s=5.0):
+        """The newest streamed frame, optionally waiting for one recorded after `newer_than`.
+
+        Passing the counter taken before a stage move is how a measurement gets a frame it knows
+        was captured after the move finished, rather than one still in flight from before it.
+
+        Returns:
+            tuple: `(image, counter)`; image is None if nothing arrived within the timeout
+        """
+        slot = self.frame_slot
+        if newer_than is None:
+            return slot.take_newer_than(-1, timeout_s)
+        return slot.take_newer_than(newer_than, timeout_s)
+
+    def start_streaming(self, handler=None, buffer_count=10):
+        """Start a continuous acquisition.
+
+        Every frame is recorded into this camera's shared newest-frame slot, so anything else
+        holding the same camera can read the stream through `latest_streamed_frame()` instead of
+        trying to open a second acquisition, which the camera cannot serve.
+
+        `handler` is optional. When given it is called as `handler(camera, stream, frame)` and
+        **must** hand the buffer back with `camera.queue_frame(frame)`; without one the buffer is
+        requeued here. Use `frame_to_array` to get a numpy array out of a frame; the array vmbpy
+        provides directly is only borrowed and must not outlive the callback.
 
         The handler runs on vmbpy's own thread, so it must not take this instrument's `thread_lock`:
         a `stop_streaming()` on another thread holds that lock while waiting for the stream to end,
         which would deadlock.
 
         Arguments:
-            handler (callable): frame callback, signature `(camera, stream, frame)`
+            handler (callable): optional frame callback, signature `(camera, stream, frame)`
             buffer_count (int): how many frame buffers to announce. More buffers absorb longer GUI
                 stalls at the cost of memory.
         """
+        slot = self.frame_slot
+
+        def recording_handler(camera, stream, frame):
+            try:
+                if self.frame_is_complete(frame):
+                    slot.put(self.frame_to_array(frame))
+            except Exception:
+                # one unusable frame must not kill the stream, and at video rate this must not
+                # spam a traceback per frame
+                self.logger.debug("Could not record a streamed frame.", exc_info=True)
+            finally:
+                if handler is not None:
+                    handler(camera, stream, frame)
+                else:
+                    camera.queue_frame(frame)
+
         with self._cam_lock:
             if not self._open:
                 raise InstrumentException(
@@ -525,7 +611,7 @@ class CameraAlliedVisionAlvium(Instrument):
                     "Camera is already streaming. Call stop_streaming() first.")
 
             self._try_set('AcquisitionMode', 'Continuous')
-            self._cam.start_streaming(handler=handler, buffer_count=int(buffer_count))
+            self._cam.start_streaming(handler=recording_handler, buffer_count=int(buffer_count))
 
         self.logger.debug("Started streaming from camera %s.", self._static_info.get('camera id'))
 

@@ -89,7 +89,6 @@ class PowerMeterCameraAlvium(Instrument):
       `camera_dark_reference.npy`.
     * `clip_negative` (bool): default False. See `_integrate` for why clipping is the wrong default.
     * `keep_camera_open` (bool): default True, so `close()` leaves the camera connected.
-    * `stop_streaming_on_open` (bool): default False. See `_ensure_not_streaming`.
 
     #### example instruments.config entry
 
@@ -111,6 +110,11 @@ class PowerMeterCameraAlvium(Instrument):
                              'timeout_ms', 'throughput_limit')
 
     DEFAULT_DARK_REFERENCE_FILE = 'camera_dark_reference.npy'
+
+    #: Where the integration ROI set from the Camera View is kept. Deliberately its own file rather
+    #: than the instruments.config args: a window's saved instrument selection stores those args
+    #: verbatim and restores them over the config, so an ROI edited there would be shadowed.
+    INTEGRATION_ROI_FILE = 'camera_integration_roi.json'
 
     MINIMUM_DB = MINIMUM_DB
 
@@ -142,7 +146,6 @@ class PowerMeterCameraAlvium(Instrument):
             self._kwargs.get('dark_reference_file', self.DEFAULT_DARK_REFERENCE_FILE))
         self._clip_negative = bool(self._kwargs.get('clip_negative', False))
         self._keep_camera_open = bool(self._kwargs.get('keep_camera_open', True))
-        self._stop_streaming_on_open = bool(self._kwargs.get('stop_streaming_on_open', False))
         self._settings_check_interval = int(
             self._kwargs.get('settings_check_interval', DEFAULT_SETTINGS_CHECK_INTERVAL))
 
@@ -191,13 +194,31 @@ class PowerMeterCameraAlvium(Instrument):
         if not self._camera._open:
             self._camera.open()
 
-        self._ensure_not_streaming(
-            "Cannot start a camera-backed power meter while the camera is streaming.")
+        # Streaming is fine: readings are taken from the stream, so the live Camera View can stay
+        # open and running throughout a search.
+        if self._camera.is_streaming:
+            self.logger.info(
+                "Camera is streaming; readings will be taken from that stream so the live view "
+                "keeps running.")
 
         # a frame timeout shorter than the exposure would abort a long acquisition
         exposure_ms = float(self._camera.exposure_time) / 1000.0
         self._frame_timeout_ms = int(max(int(self._kwargs.get('timeout_ms', 5000)),
                                          2.0 * exposure_ms + 500.0))
+
+        # An ROI set from the Camera View wins over the one in this instrument's config args: it is
+        # the one the user chose while looking at the actual beam spot.
+        stored_roi = self.load_integration_roi()
+        if stored_roi is not None:
+            self.roi = stored_roi
+            self.logger.info("Using the integration ROI stored from the Camera View: %s", self.roi)
+
+        if not (self._roi_width and self._roi_height):
+            self.logger.warning(
+                "The integration ROI covers the whole frame, so the reading sums the beam spot "
+                "together with the entire background. That pedestal can easily be larger than the "
+                "signal, leaving too little contrast for a peak search to resolve. Set a ROI around "
+                "the spot in the Camera View.")
 
         self._reference_settings = self._current_settings()
         self._triggers_since_settings_check = 0
@@ -224,24 +245,6 @@ class PowerMeterCameraAlvium(Instrument):
     def thread_lock(self):
         return self._camera.thread_lock if self._camera is not None else self._capture_lock
 
-    def _ensure_not_streaming(self, context):
-        """Refuse to acquire while the live Camera View owns the camera.
-
-        Single frames cannot be taken during a stream. Stealing the stream would silently freeze a
-        preview somebody is watching, and reusing the streamed frames is worse: they are not
-        synchronised with stage motion, so a scan point could be scored on a frame captured before
-        the stage finished moving.
-        """
-        if self._camera is None or not self._camera.is_streaming:
-            return
-        if self._stop_streaming_on_open:
-            self.logger.warning("Stopping the camera stream, stop_streaming_on_open is set.")
-            self._camera.stop_streaming()
-            return
-        raise InstrumentException(
-            context + " The live Camera View is running: press Stop there and try again, or set "
-            '"stop_streaming_on_open": true in this instrument\'s config args.')
-
     #
     # settings
     #
@@ -266,6 +269,29 @@ class PowerMeterCameraAlvium(Instrument):
     @unit.setter
     def unit(self, value):
         self._merit_unit = self._normalised_unit(value)
+
+    @classmethod
+    def integration_roi_path(cls):
+        """Absolute path of the stored integration ROI."""
+        return get_configuration_file_path(cls.INTEGRATION_ROI_FILE)
+
+    @classmethod
+    def save_integration_roi(cls, x, y, width, height):
+        """Store the integration ROI for every instance of this class to pick up on open()."""
+        roi = {'x': int(x), 'y': int(y), 'width': int(width), 'height': int(height)}
+        with open(cls.integration_roi_path(), 'w') as roi_file:
+            json.dump(roi, roi_file, indent=4)
+        return roi
+
+    @classmethod
+    def load_integration_roi(cls):
+        """The stored integration ROI as `[x, y, width, height]`, or None if there is none."""
+        try:
+            with open(cls.integration_roi_path(), 'r') as roi_file:
+                roi = json.load(roi_file)
+            return [int(roi['x']), int(roi['y']), int(roi['width']), int(roi['height'])]
+        except Exception:
+            return None
 
     @property
     def roi(self):
@@ -541,10 +567,33 @@ class PowerMeterCameraAlvium(Instrument):
         if not self._open:
             raise InstrumentException(
                 "Camera-backed power meter is not open. Call open() before taking readings.")
-        self._ensure_not_streaming("Cannot take a reading while the camera is streaming.")
+
+        # If something else already has the camera streaming - the live Camera View - read that
+        # stream rather than trying to open a second acquisition, which the camera cannot serve.
+        # Only frames recorded after this call are accepted, so a reading can never be scored on
+        # a frame captured before the stage finished moving.
+        if self._camera.is_streaming:
+            return self._take_streamed_frames(count)
+
         if count == 1:
             return [self._camera.snap_photo(timeout_ms=self._frame_timeout_ms)]
         return self._camera.snap_photos(count, timeout_ms=self._frame_timeout_ms)
+
+    def _take_streamed_frames(self, count):
+        """Collect `count` frames recorded after this call from the running stream."""
+        timeout_s = self._frame_timeout_ms / 1000.0
+        # everything already in the slot predates this call, so start from the current counter
+        seen = self._camera.frame_slot.counter
+        frames = []
+        for _ in range(int(count)):
+            image, seen = self._camera.latest_streamed_frame(newer_than=seen, timeout_s=timeout_s)
+            if image is None:
+                raise InstrumentException(
+                    "No new frame arrived from the camera stream within {:.1f} s. The live Camera "
+                    "View may have been stopped mid-measurement, or the exposure time ({:.1f} us) "
+                    "is longer than the timeout.".format(timeout_s, self.exposure_time))
+            frames.append(image)
+        return frames
 
     def _reduce(self, frames):
         total = float(np.mean([self._integrate(frame) for frame in frames]))

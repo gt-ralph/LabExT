@@ -12,11 +12,13 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
 import numpy as np
 
+from LabExT.Instruments.CameraAlliedVisionAlvium import _StreamedFrameSlot
 from LabExT.Instruments.InstrumentAPI import InstrumentException
 from LabExT.Instruments.PowerMeterCameraAlvium import MINIMUM_DB, PowerMeterCameraAlvium
 
@@ -25,7 +27,9 @@ class StubCamera:
     """Enough of CameraAlliedVisionAlvium for the adapter, with scripted frames."""
 
     def __init__(self, frames=None, pixel_format='Mono8', exposure_time=5000.0, gain=0.0,
-                 roi=None, serial='STUB1'):
+                 roi=None, serial='STUB1', timeout_ms=None):
+        self.frame_slot = _StreamedFrameSlot()
+        self.timeout_ms = timeout_ms
         self.frames = frames if frames is not None else [np.zeros((16, 20), dtype=np.uint8)]
         self.pixel_format = pixel_format
         self.exposure_time = exposure_time
@@ -56,6 +60,15 @@ class StubCamera:
 
     def get_instrument_parameter(self):
         return {'idn': self.idn(), 'exposure_time': self.exposure_time}
+
+    def latest_streamed_frame(self, newer_than=None, timeout_s=5.0):
+        return self.frame_slot.take_newer_than(-1 if newer_than is None else newer_than, timeout_s)
+
+    def frame_after(self, delay_s, image):
+        """Deliver a frame into the slot from another thread, after a delay."""
+        timer = threading.Timer(delay_s, lambda: self.frame_slot.put(image))
+        timer.daemon = True
+        timer.start()
 
 
 def make_meter(camera, **kwargs):
@@ -343,21 +356,37 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         meter.open()
         self.assertAlmostEqual(meter.fetch_power(), (4 * 64 + 8 * 64) / 2.0, places=6)
 
-    def test_streaming_camera_is_refused(self):
-        camera = StubCamera()
-        camera.is_streaming = True
+    def test_streaming_camera_is_read_rather_than_refused(self):
+        """A running live view must not block a measurement; its stream is read instead."""
+        camera = StubCamera([np.full((16, 20), 3, dtype=np.uint8)])
         meter = make_meter(camera)
-        with self.assertRaises(InstrumentException) as ctx:
-            meter.open()
-        self.assertIn("Camera View", str(ctx.exception))
+        meter.open()
 
-    def test_streaming_started_after_open_is_refused_on_read(self):
-        camera = StubCamera()
+        camera.is_streaming = True
+        camera.frame_after(0.05, np.full((16, 20), 5, dtype=np.uint8))
+        self.assertAlmostEqual(meter.fetch_power(), 5.0 * 16 * 20, places=6)
+        self.assertEqual(camera.snap_count, 0, "should not have opened a second acquisition")
+
+    def test_streamed_frames_must_be_newer_than_the_request(self):
+        """A reading must never be scored on a frame captured before the stage finished moving."""
+        camera = StubCamera([np.zeros((16, 20), dtype=np.uint8)])
         meter = make_meter(camera)
         meter.open()
         camera.is_streaming = True
-        with self.assertRaises(InstrumentException):
+
+        # a frame that predates the request must be ignored in favour of the next one
+        camera.frame_slot.put(np.full((16, 20), 9, dtype=np.uint8))    # stale
+        camera.frame_after(0.05, np.full((16, 20), 4, dtype=np.uint8))  # arrives after the call
+        self.assertAlmostEqual(meter.fetch_power(), 4.0 * 16 * 20, places=6)
+
+    def test_streaming_timeout_raises_a_clear_error(self):
+        camera = StubCamera([np.zeros((16, 20), dtype=np.uint8)], timeout_ms=200)
+        meter = make_meter(camera, timeout_ms=200)
+        meter.open()
+        camera.is_streaming = True   # streaming, but no frames ever arrive
+        with self.assertRaises(InstrumentException) as ctx:
             meter.fetch_power()
+        self.assertIn("stream", str(ctx.exception).lower())
 
     def test_settings_change_mid_run_is_detected(self):
         camera = StubCamera([np.ones((8, 8), dtype=np.uint8)])

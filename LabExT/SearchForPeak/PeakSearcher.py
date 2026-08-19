@@ -161,6 +161,7 @@ class PeakSearcher(Measurement):
         # merit semantics, set from the instruments and parameters at the start of a search
         self._merit_is_linear = False
         self._merit_unit_label = 'dBm'
+        self._linear_contrast_threshold = NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST
 
         self.logger.info(
             'Initialized Search for Peak with method: ' + str(self.name))
@@ -359,6 +360,8 @@ class PeakSearcher(Measurement):
                 meter.wavelength = self.parameters['Laser wavelength'].value
                 meter.range = self.parameters['Power Meter range'].value
 
+        self._linear_contrast_threshold = max(
+            0.0, float(self.parameters['Camera no-peak contrast threshold'].value) / 100.0)
         self._merit_is_linear = bool(camera_backed) and all(camera_backed) and merit_unit == 'counts'
         self._merit_unit_label = merit_unit if (camera_backed and all(camera_backed)) else 'dBm'
 
@@ -385,7 +388,7 @@ class PeakSearcher(Measurement):
         peak = float(np.max(values))
         if peak <= 0.0:
             return False
-        return (span / peak) >= NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST
+        return (span / peak) >= self._linear_contrast_threshold
 
     def _dynamic_range_message(self, values) -> str:
         span = float(np.max(values) - np.min(values))
@@ -398,9 +401,11 @@ class PeakSearcher(Measurement):
             return (f'Scan maximum is {peak:.4g} counts, which is not positive, so there is no '
                     'signal to search on. Staying at start point.')
         return (f'Contrast of {span / peak:.1%} (min {np.min(values):.4g}, max {peak:.4g} counts) '
-                f'is below the {NO_PEAK_FOUND_DYNAMIC_RANGE_LINEAR_CONTRAST:.1%} no-peak-found '
-                f'threshold, the linear equivalent of {NO_PEAK_FOUND_DYNAMIC_RANGE_DB}dB. '
-                'No clear peak detected; staying at start point.')
+                f'is below the {self._linear_contrast_threshold:.1%} no-peak-found threshold. '
+                'No clear peak detected; staying at start point. If the beam clearly moves, either '
+                'lower "Camera no-peak contrast threshold" or tighten the integration ROI around '
+                'the spot in the Camera View, since summing the whole frame buries the signal in '
+                'background.')
 
     @staticmethod
     def get_default_parameter():
@@ -417,6 +422,12 @@ class PeakSearcher(Measurement):
             # intensity profile of a beam is Gaussian in linear units, which is the shape
             # fit_gaussian() looks for; in dB it is a parabola and fits less well.
             'Camera merit unit': MeasParamList(options=['counts', 'dB'], value='counts'),
+            # Only applies to camera-backed power meters reporting counts. The dBm criterion below
+            # is a factor-of-two change, which suits a detector with almost no background. An
+            # integrated camera ROI always carries some background, so the same scan shows a much
+            # smaller relative change and needs its own, lower bar. Raise it if noise is being
+            # mistaken for a peak; lower it if real peaks are being rejected.
+            'Camera no-peak contrast threshold': MeasParamFloat(value=10.0, unit='%'),
         }
         for pass_name in PeakSearcher.PASS_NAMES:
             params.update({

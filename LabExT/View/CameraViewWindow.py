@@ -65,14 +65,10 @@ class CameraViewWindow(Toplevel):
         # frame hand-off between the vmbpy callback thread and the GUI thread. Only ever holds the
         # newest frame; the lock is this window's own, never the instrument's, because the callback
         # must not contend with a stop_streaming() that is waiting for the stream to end.
-        self._frame_lock = threading.Lock()
-        self._incoming_frame = None
-        self._incoming_format = None
+        self._frames_seen = 0
         self._displayed_frame = None
-        self._incomplete_frames = 0
 
         # frame rate measurement
-        self._frames_since_tick = 0
         self._fps = 0.0
         self._fps_window_start = time.time()
         self._tick_count = 0
@@ -82,6 +78,8 @@ class CameraViewWindow(Toplevel):
         # garbage collected, leaving the canvas blank
         self._photo_image = None
         self._canvas_image_id = None
+        self._displayed_image_size = (0, 0)
+        self._displayed_image_origin = (0, 0)
 
         # slider values are applied once per tick rather than per event, so dragging a slider does
         # not flood the camera with feature writes
@@ -131,6 +129,7 @@ class CameraViewWindow(Toplevel):
         self._build_format_roi_controls(controls)
         self._build_display_controls(controls)
         self._build_save_controls(controls)
+        self._build_integration_roi_controls(controls)
         self._build_dark_reference_controls(controls)
         self._build_histogram(controls)
 
@@ -258,6 +257,133 @@ class CameraViewWindow(Toplevel):
 
         frame.columnconfigure(1, weight=1)
 
+    def _build_integration_roi_controls(self, parent):
+        frame = CustomFrame(parent)
+        frame.title = " Integration ROI (peak search) "
+        frame.pack(side=TOP, fill=X, pady=2)
+
+        Label(frame, text="Region the camera-backed power meter sums.", anchor='w',
+              justify=LEFT, wraplength=240).grid(row=0, column=0, columnspan=4, sticky='we')
+
+        self._integration_roi_vars = {}
+        for index, (key, label) in enumerate((('x', 'x'), ('y', 'y'),
+                                              ('width', 'width'), ('height', 'height'))):
+            row, column = 1 + index // 2, (index % 2) * 2
+            Label(frame, text=label).grid(row=row, column=column, sticky='w')
+            var = StringVar(self, value='0')
+            Entry(frame, textvariable=var, width=7).grid(row=row, column=column + 1, sticky='we')
+            self._integration_roi_vars[key] = var
+
+        Button(frame, text="Apply", command=self._on_apply_integration_roi).grid(
+            row=3, column=0, columnspan=2, sticky='we', pady=(4, 0))
+        Button(frame, text="Fit to spot", command=self._on_fit_integration_roi_to_spot).grid(
+            row=3, column=2, columnspan=2, sticky='we', pady=(4, 0))
+
+        self._integration_roi_status_var = StringVar(self, value="")
+        Label(frame, textvariable=self._integration_roi_status_var, anchor='w', justify=LEFT,
+              wraplength=240).grid(row=4, column=0, columnspan=4, sticky='we')
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
+
+        self._load_integration_roi_into_fields()
+
+    def _load_integration_roi_into_fields(self):
+        roi = PowerMeterCameraAlvium.load_integration_roi()
+        if roi:
+            for key, value in zip(('x', 'y', 'width', 'height'), roi):
+                self._integration_roi_vars[key].set(str(int(value)))
+        self._describe_integration_roi()
+
+    def _describe_integration_roi(self):
+        x, y, width, height = self._read_integration_roi()
+        if not (width and height):
+            self._integration_roi_status_var.set(
+                "Whole frame: the sum includes all background, which usually leaves too little "
+                "contrast for a peak search.")
+        else:
+            self._integration_roi_status_var.set(
+                "Summing {:d}x{:d} px at ({:d}, {:d}).".format(width, height, x, y))
+
+    def _read_integration_roi(self):
+        values = []
+        for key in ('x', 'y', 'width', 'height'):
+            try:
+                values.append(max(0, int(float(self._integration_roi_vars[key].get()))))
+            except ValueError:
+                values.append(0)
+        return values
+
+    def _on_apply_integration_roi(self):
+        x, y, width, height = self._read_integration_roi()
+        if width and height and self._displayed_frame is not None:
+            frame_height, frame_width = self._displayed_frame.shape[:2]
+            if x + width > frame_width or y + height > frame_height:
+                messagebox.showerror(
+                    "ROI does not fit",
+                    "The region {:d}x{:d} at ({:d}, {:d}) runs past the {:d}x{:d} frame the camera "
+                    "delivers.".format(width, height, x, y, frame_width, frame_height), parent=self)
+                return
+
+        PowerMeterCameraAlvium.save_integration_roi(x, y, width, height)
+        self._describe_integration_roi()
+        self._draw_integration_roi()
+        self._status_var.set("Integration ROI saved; the peak search will use it on its next run.")
+
+    def _on_fit_integration_roi_to_spot(self):
+        """Centre a ROI on the brightest part of the current frame.
+
+        A starting point rather than a final answer: it sizes the box from where the intensity
+        falls away, which is a reasonable guess for a single spot and nonsense for a scene with
+        several bright features.
+        """
+        frame = self._displayed_frame
+        if frame is None:
+            messagebox.showinfo("No image", "Start the preview first.", parent=self)
+            return
+
+        background = float(np.median(frame))
+        above = np.asarray(frame, dtype=np.float64) - background
+        peak = float(above.max())
+        if peak <= 0:
+            messagebox.showinfo("No spot found",
+                                "The image is flat, so there is no spot to fit to.", parent=self)
+            return
+
+        # everything at more than half the peak counts as the spot, padded to give it room
+        rows, columns = np.nonzero(above >= 0.5 * peak)
+        pad_y = max(4, int(0.5 * (rows.max() - rows.min() + 1)))
+        pad_x = max(4, int(0.5 * (columns.max() - columns.min() + 1)))
+        x = max(0, int(columns.min()) - pad_x)
+        y = max(0, int(rows.min()) - pad_y)
+        width = min(frame.shape[1] - x, int(columns.max() - columns.min() + 1) + 2 * pad_x)
+        height = min(frame.shape[0] - y, int(rows.max() - rows.min() + 1) + 2 * pad_y)
+
+        for key, value in zip(('x', 'y', 'width', 'height'), (x, y, width, height)):
+            self._integration_roi_vars[key].set(str(int(value)))
+        self._describe_integration_roi()
+        self._draw_integration_roi()
+        self._status_var.set(
+            "Fitted a {:d}x{:d} ROI to the spot. Press Apply to use it.".format(width, height))
+
+    def _draw_integration_roi(self):
+        """Outline the integration ROI on the preview, in frame pixels mapped to canvas pixels."""
+        self._preview_canvas.delete('integration_roi')
+        x, y, width, height = self._read_integration_roi()
+        if not (width and height) or self._displayed_frame is None or self._canvas_image_id is None:
+            return
+
+        frame_height, frame_width = self._displayed_frame.shape[:2]
+        image_width, image_height = self._displayed_image_size
+        if not image_width or not image_height:
+            return
+        scale_x, scale_y = image_width / frame_width, image_height / frame_height
+
+        left = self._displayed_image_origin[0] + x * scale_x
+        top = self._displayed_image_origin[1] + y * scale_y
+        self._preview_canvas.create_rectangle(
+            left, top, left + width * scale_x, top + height * scale_y,
+            outline='#00ff7f', width=2, tags='integration_roi')
+
     def _build_dark_reference_controls(self, parent):
         frame = CustomFrame(parent)
         frame.title = " Dark Reference "
@@ -331,8 +457,7 @@ class CameraViewWindow(Toplevel):
         finally:
             if was_streaming:
                 try:
-                    self.camera.start_streaming(handler=self._frame_handler,
-                                                buffer_count=self.STREAM_BUFFER_COUNT)
+                    self.camera.start_streaming(buffer_count=self.STREAM_BUFFER_COUNT)
                 except Exception:
                     self.logger.exception("Could not restart the camera stream.")
             self._update_button_states()
@@ -450,15 +575,14 @@ class CameraViewWindow(Toplevel):
 
     def _on_start(self):
         try:
-            self.camera.start_streaming(handler=self._frame_handler,
-                                        buffer_count=self.STREAM_BUFFER_COUNT)
+            self.camera.start_streaming(buffer_count=self.STREAM_BUFFER_COUNT)
         except Exception as exc:
             self.logger.exception("Could not start camera stream.")
             messagebox.showerror("Camera error", "Could not start streaming:\n\n" + str(exc),
                                  parent=self)
             return
         self._fps_window_start = time.time()
-        self._frames_since_tick = 0
+        self._frames_seen = self.camera.frame_slot.counter
         self._update_button_states()
 
     def _on_stop(self):
@@ -469,35 +593,6 @@ class CameraViewWindow(Toplevel):
         self._fps = 0.0
         self._update_button_states()
 
-    def _frame_handler(self, camera, stream, frame):
-        """Runs on a vmbpy thread. Keeps only the newest frame and hands the buffer straight back.
-
-        Must not touch Tk, and must not take the instrument's thread_lock: stop_streaming() holds
-        that lock while waiting for the stream to end.
-        """
-        try:
-            # incomplete frames carry no usable pixel format and must never reach the converter
-            if not self.camera.frame_is_complete(frame):
-                with self._frame_lock:
-                    self._incomplete_frames += 1
-                return
-
-            # take the format off the frame, not off the camera: it is free, and it keeps the
-            # display scaling correct even if the camera is reconfigured from elsewhere
-            source_format = self.camera.frame_pixel_format(frame)
-            image = self.camera.frame_to_array(frame)
-            with self._frame_lock:
-                self._incoming_frame = image
-                self._incoming_format = source_format
-                self._frames_since_tick += 1
-        except Exception:
-            # at video rate this must not spam a traceback per frame
-            with self._frame_lock:
-                self._incomplete_frames += 1
-            self.logger.debug("Error converting a streamed camera frame.", exc_info=True)
-        finally:
-            camera.queue_frame(frame)
-
     #
     # periodic GUI update
     #
@@ -507,15 +602,17 @@ class CameraViewWindow(Toplevel):
         try:
             self._apply_pending_slider_values()
 
-            with self._frame_lock:
-                frame = self._incoming_frame
-                frame_format = self._incoming_format
-                self._incoming_frame = None
-                new_frames = self._frames_since_tick
-                self._frames_since_tick = 0
+            # the driver records every streamed frame into a slot shared with anything else
+            # holding this camera, so the preview and a running measurement see the same stream
+            frame, counter = (None, self._frames_seen)
+            if self._connected:
+                frame, counter = self.camera.latest_streamed_frame(
+                    newer_than=self._frames_seen, timeout_s=0.0)
+            new_frames = counter - self._frames_seen
+            self._frames_seen = counter
 
-            if frame_format is not None:
-                self._display_bit_depth = self._bit_depth_of(frame_format)
+            if frame is not None:
+                self._display_bit_depth = self._bit_depth_of(self.camera.pixel_format)
 
             self._update_frame_rate(new_frames)
 
@@ -608,6 +705,9 @@ class CameraViewWindow(Toplevel):
 
         # the reference must survive this function or Tk shows an empty canvas
         self._photo_image = ImageTk.PhotoImage(image, master=self._preview_canvas)
+        self._displayed_image_size = (image.width, image.height)
+        self._displayed_image_origin = ((canvas_width - image.width) // 2,
+                                        (canvas_height - image.height) // 2)
         if self._canvas_image_id is None:
             self._canvas_image_id = self._preview_canvas.create_image(
                 canvas_width // 2, canvas_height // 2, image=self._photo_image)
@@ -615,14 +715,12 @@ class CameraViewWindow(Toplevel):
             self._preview_canvas.coords(
                 self._canvas_image_id, canvas_width // 2, canvas_height // 2)
             self._preview_canvas.itemconfig(self._canvas_image_id, image=self._photo_image)
+        self._draw_integration_roi()
 
     def _update_status(self, frame):
         status = "{:.1f} fps   {:d}x{:d} {:s}   min {:.0f} / mean {:.1f} / max {:.0f}".format(
             self._fps, frame.shape[1], frame.shape[0], str(frame.dtype),
             float(frame.min()), float(frame.mean()), float(frame.max()))
-        if self._incomplete_frames:
-            # a steadily climbing count means the link is dropping data
-            status += "   {:d} incomplete".format(self._incomplete_frames)
         self._status_var.set(status)
 
     def _update_histogram(self, frame):
@@ -667,17 +765,16 @@ class CameraViewWindow(Toplevel):
                 self.logger.exception("Could not read camera settings back.")
             if was_streaming:
                 try:
-                    self.camera.start_streaming(handler=self._frame_handler,
-                                                buffer_count=self.STREAM_BUFFER_COUNT)
+                    self.camera.start_streaming(buffer_count=self.STREAM_BUFFER_COUNT)
                 except Exception:
                     self.logger.exception("Could not restart camera stream.")
             self._update_button_states()
 
     def _reset_preview(self):
         """Drop the current image so a changed frame size is not drawn into a stale canvas item."""
-        with self._frame_lock:
-            self._incoming_frame = None
-            self._incoming_format = None
+        # skip whatever the stream has already produced at the old geometry
+        if self._connected:
+            self._frames_seen = self.camera.frame_slot.counter
         if self._canvas_image_id is not None:
             self._preview_canvas.delete(self._canvas_image_id)
             self._canvas_image_id = None
