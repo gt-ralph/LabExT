@@ -164,7 +164,18 @@ class Instrument(object):
                 self.logger.warning(msg)
 
         if self._open:  # skip getting properties if instrument was not successfully opened above
-            ret_dict['idn'] = self.idn()
+            # Guarded like the properties below. This runs while collecting metadata, before any
+            # measurement has started, so an instrument that is configured but not physically
+            # reachable used to kill the whole experiment thread here with a bare VISA error
+            # rather than failing later where it is clear which instrument is missing and why.
+            try:
+                ret_dict['idn'] = self.idn()
+            except Exception as e:
+                ret_dict['idn'] = "ERROR getting idn: " + repr(e)
+                self.logger.warning(
+                    "%s at %s did not answer *IDN?: %r. It is configured but may not be "
+                    "connected, powered on, or at the address it is configured at.",
+                    self.__class__.__name__, getattr(self, '_address', 'unknown address'), e)
             for prop in self.networked_instrument_properties:
                 try:
                     val = getattr(self, prop)  # network access here
