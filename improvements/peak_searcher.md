@@ -112,6 +112,36 @@ surrounding stage/power-meter/GUI infrastructure (fiber-array-to-PIC alignment).
       history shows active bug-fixing). Also fix the `acceleration` setter's signature
       mismatch (accepts an unused `max_velocity=None` kwarg inconsistent with how
       Python property setters are invoked elsewhere).
+  - [ ] **Detect a stale connection instead of requiring a LabExT restart.** Found
+        2026-08-19 while debugging "can't wiggle the axes": the fix was restarting
+        LabExT. `connect()` returns early on `if self.connected` without checking the
+        link is alive, so once a K-Cube's USB connection drops or desyncs, the
+        `KinesisMotor` handles in `self.channels` are dead but `self.connected` stays
+        `True` — the stage reports itself connected while every command fails deep in
+        pylablib's `recv_comm`. The symptom is a stream of `Unhandled exception` blocks
+        from `CoordinateWidget._refresh_position` → `Calibration.get_position()` →
+        `ThorlabsKCube.get_position()` (several in `~/.labext/debug.log`), and a GUI
+        that looks connected but does nothing. Either verify the handles in `connect()`
+        (a cheap `get_status()` per channel) and rebuild them if they fail, or catch the
+        pylablib comms error in `get_position`/`move_*` and mark the stage disconnected
+        so the GUI can offer a reconnect.
+  - [ ] **`find_stage_addresses()` throws away what it found.**
+        (`ThorlabsKCube.py:91-95`) It calls `Thorlabs.list_kinesis_devices()`, discards
+        the result, and returns a hardcoded `["ThorlabsKCube"]`, so LabExT can never
+        show which cubes are actually present or catch a missing/renumbered serial. The
+        serials are available and correct — a direct `list_kinesis_devices()` on the
+        real setup returns all five controllers, including the three in the `Mover`
+        config — so this is purely the driver discarding them. Returning real addresses
+        would also make the `#TODO` on that method redundant.
+  - [ ] **`connect()`'s parallel `axes`/`sns` lists only line up by luck.**
+        (`ThorlabsKCube.py:226-239`) The Z branch appends to `self.sns` but not to
+        `self.axes` (Z is deliberately excluded so LabExT never drives it), leaving the
+        two lists different lengths; `zip(self.sns, self.axes)` then silently truncates.
+        It pairs correctly *only because Z is listed last* in the `Mover` config —
+        reorder that config and X/Y would bind to the wrong serials with no error. Skip
+        the `sns` append for Z, or build a single `[(axis, sn)]` list instead of two.
+        Both lists are also appended to rather than reset at the top of `connect()`, so
+        a retry after a partial failure would accumulate duplicates.
 - [ ] Reconsider `MoverNew`'s global-only `speed_xy`/`acceleration_xy` (applies to
       every connected stage simultaneously) if any setup needs per-stage or per-axis
       speed tuning during a search. (`LabExT/Movement/MoverNew.py:464,524`)
