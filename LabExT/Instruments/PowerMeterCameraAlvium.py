@@ -474,10 +474,25 @@ class PowerMeterCameraAlvium(Instrument):
                 "current camera settings.", image_path)
 
         if differences:
-            raise InstrumentException(
-                "The stored dark reference does not match the camera as it is now, so subtracting "
-                "it would corrupt every reading: " + "; ".join(differences)
-                + ". Capture a new dark reference with the beam blocked.")
+            message = ("The stored dark reference does not match the camera as it is now, so "
+                       "subtracting it would corrupt every reading: " + "; ".join(differences)
+                       + ". Capture a new dark reference with the beam blocked.")
+            # If this instrument forces camera settings of its own, they are applied on open(),
+            # before this check. Recapturing in the Camera View then cannot help: opening the
+            # instrument just overwrites the setting again and the mismatch returns. Say so,
+            # rather than sending the user round that loop.
+            forced = [name for name in ('exposure_time', 'gain', 'pixel_format')
+                      if name in self._kwargs]
+            if forced:
+                message += (" Note that this instrument's configuration sets "
+                            + ", ".join(forced) + " itself, and applies "
+                            + ("them" if len(forced) > 1 else "it")
+                            + " when opening, overriding whatever the Camera View is showing. "
+                            "Either remove "
+                            + ("those keys" if len(forced) > 1 else "that key")
+                            + " from its args in instruments.config so it uses the camera as you "
+                            "have it set up, or set the Camera View to match before capturing.")
+            raise InstrumentException(message)
 
         self._dark_reference = dark
         self._dark_metadata = metadata

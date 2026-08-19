@@ -193,6 +193,43 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         self.assertIn("exposure time", message)
         self.assertIn("gain", message)
 
+    def test_configured_settings_override_is_called_out(self):
+        """An adapter that forces its own exposure applies it on open, before the dark check.
+
+        Recapturing in the Camera View then cannot help: the next open() overwrites the setting
+        again and the same mismatch returns. The error has to say so, or the user loops forever.
+        """
+        camera = StubCamera([np.full((16, 20), 10, dtype=np.uint8)], exposure_time=10000.0)
+        self._capture_dark(camera)
+
+        # the adapter is configured for a different exposure than the dark was taken at, and
+        # applies it when the camera opens
+        original_open = camera.open
+
+        def open_and_force():
+            camera.exposure_time = 5000.0
+            original_open()
+        camera.open = open_and_force
+
+        meter = make_meter(camera, require_dark_reference=True, exposure_time=5000.0)
+        with self.assertRaises(InstrumentException) as ctx:
+            meter.open()
+        message = str(ctx.exception)
+        self.assertIn("exposure time", message)
+        self.assertIn("instruments.config", message)
+        self.assertIn("exposure_time", message)
+
+    def test_no_override_note_when_settings_are_not_forced(self):
+        camera = StubCamera([np.full((16, 20), 10, dtype=np.uint8)], exposure_time=10000.0)
+        self._capture_dark(camera)
+        camera.exposure_time = 5000.0
+
+        meter = make_meter(camera, require_dark_reference=True)   # forces nothing
+        with self.assertRaises(InstrumentException) as ctx:
+            meter.open()
+        self.assertIn("exposure time", str(ctx.exception))
+        self.assertNotIn("instruments.config", str(ctx.exception))
+
     def test_dark_reference_shape_mismatch_raises(self):
         camera = StubCamera([np.full((16, 20), 10, dtype=np.uint8)])
         self._capture_dark(camera)
