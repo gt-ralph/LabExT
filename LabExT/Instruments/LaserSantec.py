@@ -73,6 +73,36 @@ class LaserSantec(Instrument):
         self.send_hardware_trigger = False
         self.trigger_at_open = ''  # saves state of triggering upon connecting such that we can restore on disconnect
 
+    #
+    # channel addressing
+    #
+    # The Santec mainframes address a plug-in module by number, e.g. `sour0:wav?`. The standalone
+    # tunable lasers have no modules and take the bare subsystem, `sour:wav?`, which the mainframes
+    # accept too. So with no channel configured these emit the un-numbered form rather than
+    # raising, which is what the base class does. Verified against a TSL-570: `:wav?`, `sour:wav?`
+    # and `sour0:wav?` all return the wavelength, while `sour1:...` and `slot0:...` time out.
+    #
+
+    def command_channel(self, subsystem_str, command_str):
+        if self.channel is None:
+            return self.command(subsystem_str + command_str)
+        return super().command_channel(subsystem_str, command_str)
+
+    def request_channel(self, subsystem_str, request_str):
+        if self.channel is None:
+            return self.request(subsystem_str + request_str)
+        return super().request_channel(subsystem_str, request_str)
+
+    def query_channel(self, subsystem_str, query_str):
+        if self.channel is None:
+            return self.query(subsystem_str + query_str)
+        return super().query_channel(subsystem_str, query_str)
+
+    def write_channel(self, subsystem_str, write_str):
+        if self.channel is None:
+            return self.write(subsystem_str + write_str)
+        return super().write_channel(subsystem_str, write_str)
+
     def open(self):
         """
         Open connection to instrument. We automatically unlock with the pin.
