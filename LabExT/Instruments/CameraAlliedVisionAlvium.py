@@ -52,6 +52,22 @@ AUTO_EXPOSURE_MAX_FRAMES = 5
 #: noise on a single peak pixel does not send it round another pass.
 AUTO_EXPOSURE_TOLERANCE = 0.1
 
+#: How many frames a single acquisition may lose to the link before giving up. Incomplete frames
+#: arrive routinely - at the start of an acquisition, and whenever USB3 drops data - and the frame
+#: after one is normally intact, so retrying costs a frame where failing costs a sweep. A run of
+#: them is a bandwidth or cable problem, and the error says so rather than retrying forever.
+INCOMPLETE_FRAME_RETRIES = 3
+
+
+def _frame_status(frame):
+    """A frame's status as a string, for a message. Never raises: an incomplete frame's fields are
+    not all readable, which is the whole reason it is being reported."""
+    try:
+        return str(frame.get_status())
+    except Exception:
+        return "status unreadable"
+
+
 #: fill at or above which a frame is treated as clipped, so that its peak says nothing about how
 #: far over the exposure is. Just under 1.0, because a sensor's ceiling need not be the format's:
 #: this camera rails Mono12 at 4094 rather than 4095.
@@ -877,17 +893,31 @@ class CameraAlliedVisionAlvium(Instrument):
         timeout_ms = int(timeout_ms if timeout_ms is not None else self._timeout_ms)
 
         with self._cam_lock:
-            try:
-                frame = self._cam.get_frame(timeout_ms=timeout_ms)
-            except VmbTimeout as exc:
-                raise InstrumentException(
-                    "No frame arrived within {:d} ms. The exposure time is currently {:.1f} us, so "
-                    "the timeout must be at least that long.".format(
-                        timeout_ms, self.exposure_time)) from exc
+            frame = None
+            for attempt in range(INCOMPLETE_FRAME_RETRIES + 1):
+                try:
+                    frame = self._cam.get_frame(timeout_ms=timeout_ms)
+                except VmbTimeout as exc:
+                    raise InstrumentException(
+                        "No frame arrived within {:d} ms. The exposure time is currently {:.1f} us, "
+                        "so the timeout must be at least that long.".format(
+                            timeout_ms, self.exposure_time)) from exc
 
-            if frame.get_status() != FrameStatus.Complete:
+                if self.frame_is_complete(frame):
+                    break
+                # The link drops data now and then, and the frame after usually arrives intact.
+                # Retrying is what stops one dropped frame ending a sweep that has already spent
+                # minutes on the device; a run of them is a real problem and says so below.
+                self.logger.warning(
+                    "Camera delivered an incomplete frame (%s), attempt %d of %d; retrying.",
+                    _frame_status(frame), attempt + 1, INCOMPLETE_FRAME_RETRIES + 1)
+            else:
                 raise InstrumentException(
-                    "Camera delivered an incomplete frame: {!s}".format(frame.get_status()))
+                    "Camera delivered {:d} incomplete frames in a row, the last one {!s}. That is "
+                    "the link dropping data rather than a one-off: check the USB3 cable and port, "
+                    "and consider setting this camera's 'throughput_limit' in instruments.config to "
+                    "leave the bus some headroom.".format(
+                        INCOMPLETE_FRAME_RETRIES + 1, _frame_status(frame)))
 
             image, source_format, delivered_format = self._frame_to_array(frame, squeeze=squeeze)
 
@@ -934,19 +964,39 @@ class CameraAlliedVisionAlvium(Instrument):
         images = []
 
         with self._cam_lock:
+            # Ask for more frames than are needed and keep the complete ones. Incomplete frames
+            # turn up routinely at the start of an acquisition and whenever the link drops data,
+            # and one of them is not a reason to lose a sweep that has already spent minutes on the
+            # device - which is exactly what it used to cost.
+            incomplete = 0
             try:
-                for frame in self._cam.get_frame_generator(limit=count, timeout_ms=timeout_ms):
-                    if frame.get_status() != FrameStatus.Complete:
-                        raise InstrumentException(
-                            "Camera delivered an incomplete frame: {!s}".format(frame.get_status()))
+                for frame in self._cam.get_frame_generator(
+                        limit=count + INCOMPLETE_FRAME_RETRIES, timeout_ms=timeout_ms):
+                    if not self.frame_is_complete(frame):
+                        incomplete += 1
+                        self.logger.warning(
+                            "Camera delivered an incomplete frame (%s) while acquiring %d; %d of "
+                            "%d spare frames used.", _frame_status(frame), count, incomplete,
+                            INCOMPLETE_FRAME_RETRIES)
+                        continue
 
                     image, _, _ = self._frame_to_array(frame, squeeze=squeeze)
                     images.append(image)
+                    if len(images) == count:
+                        break
             except VmbTimeout as exc:
                 raise InstrumentException(
                     "No frame arrived within {:d} ms after {:d} of {:d} frames. The exposure time "
                     "is currently {:.1f} us.".format(
                         timeout_ms, len(images), count, self.exposure_time)) from exc
+
+            if len(images) < count:
+                raise InstrumentException(
+                    "Only {:d} of {:d} frames arrived complete; {:d} were dropped by the link. That "
+                    "is the link dropping data rather than a one-off: check the USB3 cable and "
+                    "port, and consider setting this camera's 'throughput_limit' in "
+                    "instruments.config to leave the bus some headroom.".format(
+                        len(images), count, incomplete))
 
             if images:
                 self._last_image = images[-1]

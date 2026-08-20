@@ -22,7 +22,12 @@ import unittest
 
 import numpy as np
 
-from LabExT.Instruments.CameraAlliedVisionAlvium import CameraAlliedVisionAlvium, converge_exposure
+import logging
+import threading
+from unittest import mock
+
+from LabExT.Instruments.CameraAlliedVisionAlvium import (
+    CameraAlliedVisionAlvium, FrameStatus, VMBPY_AVAILABLE, converge_exposure)
 from LabExT.Instruments.InstrumentAPI import InstrumentException
 from LabExT.Tests.Utils import mark_as_laboratory_test
 
@@ -569,3 +574,103 @@ class ConvergeExposureTest(unittest.TestCase):
         self.assertEqual('converged', outcome['status'], outcome['note'])
         self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
         self.assertLessEqual(outcome['frames used'], 5)
+
+
+@unittest.skipUnless(VMBPY_AVAILABLE, "needs vmbpy for the frame status values")
+class IncompleteFrameTest(unittest.TestCase):
+    """
+    Tests that a frame the link dropped costs a frame, not a run.
+
+    Required lab setup: none. The camera is faked; only the retry policy is under test, which is
+    the part that decided a minute-old sweep was worthless when one frame arrived incomplete.
+    """
+
+    user_input_required = False
+
+    class FrameStub:
+        def __init__(self, complete):
+            self._complete = complete
+
+        def get_status(self):
+            return FrameStatus.Complete if self._complete else FrameStatus.Incomplete
+
+        def get_id(self):
+            return 0
+
+        def get_timestamp(self):
+            return 0
+
+    class CameraStub:
+        """Hands out a scripted sequence of complete and incomplete frames."""
+
+        def __init__(self, pattern):
+            self.pattern = list(pattern)
+            self.frames_handed_out = 0
+
+        def _next(self):
+            complete = self.pattern[min(self.frames_handed_out, len(self.pattern) - 1)]
+            self.frames_handed_out += 1
+            return IncompleteFrameTest.FrameStub(complete)
+
+        def get_frame(self, timeout_ms=None):
+            return self._next()
+
+        def get_frame_generator(self, limit, timeout_ms=None):
+            for _ in range(limit):
+                yield self._next()
+
+    def make_camera(self, pattern):
+        """A driver with its device access faked out, and nothing else changed."""
+        camera = object.__new__(CameraAlliedVisionAlvium)
+        camera.logger = logging.getLogger()
+        camera._cam_lock = threading.RLock()
+        camera._cam = self.CameraStub(pattern)
+        camera._timeout_ms = 1000
+        camera._last_image = None
+        camera._last_meta = {}
+        # the properties these methods touch, faked at the class level so the real code runs
+        patches = [
+            mock.patch.object(CameraAlliedVisionAlvium, '_open', property(lambda self: True)),
+            mock.patch.object(CameraAlliedVisionAlvium, 'is_streaming', property(lambda self: False)),
+            mock.patch.object(CameraAlliedVisionAlvium, 'exposure_time', property(lambda self: 1.0)),
+            mock.patch.object(CameraAlliedVisionAlvium, 'gain', property(lambda self: 0.0)),
+            mock.patch.object(CameraAlliedVisionAlvium, 'roi', property(lambda self: [8, 8, 0, 0])),
+            mock.patch.object(CameraAlliedVisionAlvium, 'pixel_format', property(lambda self: 'Mono12')),
+            mock.patch.object(CameraAlliedVisionAlvium, '_frame_to_array',
+                              lambda self, frame, squeeze=True: (np.zeros((8, 8), np.uint16),
+                                                                 'Mono12', 'Mono12')),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return camera
+
+    def test_snap_photo_retries_past_a_dropped_frame(self):
+        camera = self.make_camera([False, False, True])
+        image = camera.snap_photo()
+        self.assertEqual((8, 8), image.shape)
+        self.assertEqual(3, camera._cam.frames_handed_out)
+
+    def test_snap_photo_gives_up_on_a_run_of_them(self):
+        camera = self.make_camera([False])
+        with self.assertRaises(InstrumentException) as ctx:
+            camera.snap_photo()
+        self.assertIn("throughput_limit", str(ctx.exception))
+
+    def test_snap_photos_spends_spare_frames_on_the_dropped_ones(self):
+        # one dropped frame in the middle of a burst of three
+        camera = self.make_camera([True, False, True, True])
+        images = camera.snap_photos(3)
+        self.assertEqual(3, len(images))
+        self.assertEqual(4, camera._cam.frames_handed_out, "should have taken one spare frame")
+
+    def test_snap_photos_stops_at_the_count_it_was_asked_for(self):
+        camera = self.make_camera([True])
+        self.assertEqual(2, len(camera.snap_photos(2)))
+        self.assertEqual(2, camera._cam.frames_handed_out, "must not use the spares when clean")
+
+    def test_snap_photos_reports_how_many_the_link_dropped(self):
+        camera = self.make_camera([False])
+        with self.assertRaises(InstrumentException) as ctx:
+            camera.snap_photos(2)
+        self.assertIn("0 of 2 frames arrived complete", str(ctx.exception))
