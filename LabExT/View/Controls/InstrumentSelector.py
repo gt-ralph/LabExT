@@ -6,6 +6,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 """
 
 import json
+import logging
 import os
 from copy import deepcopy
 from tkinter import Label, OptionMenu, StringVar, font, NORMAL, END, _setit
@@ -50,6 +51,16 @@ class InstrumentRole(object):
         existing_idx = find_dict_with_ignore(instr_dict, self._choices, ['channel', 'channels'])
 
         if existing_idx is None:
+            # A saved selection that matches nothing on offer. It is still honoured, because a
+            # window whose saved instrument silently changes is worse - but it means this choice
+            # comes from the settings file and not from instruments.config, so anything edited
+            # there is being shadowed. Said out loud: an instrument that is no longer in the config
+            # still being used is otherwise invisible until it fails to connect.
+            logging.getLogger().warning(
+                "Restoring instrument selection %s from the saved settings: it matches no entry in "
+                "instruments.config, so the config is being shadowed. Re-select this role and save "
+                "to drop it.", {key: value for key, value in instr_dict.items()
+                                if key in ('class', 'visa')})
             self._choices.append(instr_dict)
             self.selected_instr.set(self.choices_human_readable_desc[-1])
         else:
