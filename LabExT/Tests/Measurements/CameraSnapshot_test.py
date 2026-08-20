@@ -103,11 +103,25 @@ class StubCamera:
 class StubLaser:
     """Gates the stub camera's light the way the real laser gates the chip's."""
 
+    min_lambda = 1500.0
+    max_lambda = 1630.0
+
     def __init__(self, camera):
         self.camera = camera
         self.unit = 'dBm'
-        self.wavelength = 1550.0
+        self._wavelength = 1550.0
         self.power = -15.0
+        #: every wavelength this was set to, in order, to check the sweep steps and their timing
+        self.wavelengths_set = []
+
+    @property
+    def wavelength(self):
+        return self._wavelength
+
+    @wavelength.setter
+    def wavelength(self, value):
+        self._wavelength = float(value)
+        self.wavelengths_set.append(float(value))
 
     def open(self):
         pass
@@ -152,6 +166,9 @@ class CameraSnapshotTest(unittest.TestCase):
         """
         camera = camera if camera is not None else StubCamera()
         laser = StubLaser(camera)
+        # kept for the tests which check what the laser was told to do; the return value stays a
+        # triple so every test does not have to unpack it
+        self.laser = laser
         measurement = CameraSnapshot()
 
         parameters = measurement.parameters
@@ -326,6 +343,89 @@ class CameraSnapshotTest(unittest.TestCase):
 
         # not on the last and shortest bracket, which the live view would then be stuck with
         self.assertEqual(parameters.get('exposure time').value, camera.exposure_time)
+
+    #
+    # wavelength sweep
+    #
+
+    def test_wavelength_list_covers_the_range_in_both_directions(self):
+        sweep = CameraSnapshot._sweep_wavelengths
+
+        # a stop of zero, or one equal to the start, is a single-wavelength capture
+        self.assertEqual([1550.0], sweep(1550.0, 0.0, 5.0))
+        self.assertEqual([1550.0], sweep(1550.0, 1550.0, 5.0))
+
+        self.assertEqual([1550.0, 1555.0, 1560.0], sweep(1550.0, 1560.0, 5.0))
+        self.assertEqual([1560.0, 1555.0, 1550.0], sweep(1560.0, 1550.0, 5.0))
+        # the step need not divide the span: the stop is still reached
+        np.testing.assert_allclose([1550.0, 1554.0, 1558.0, 1560.0],
+                                   sweep(1550.0, 1560.0, 4.0))
+        # a step wider than the span gives both ends and nothing between
+        self.assertEqual([1550.0, 1560.0], sweep(1550.0, 1560.0, 50.0))
+
+        with self.assertRaises(ValueError):
+            sweep(1550.0, 1560.0, 0.0)
+        with self.assertRaises(ValueError):
+            sweep(1500.0, 1600.0, 0.001)  # 100001 points
+
+    def test_sweep_captures_every_bracket_at_every_wavelength(self):
+        data, _, _ = self.run_algorithm(**{'wavelength stop': 1560.0, 'wavelength step': 5.0,
+                                           'wavelength settle time': 0.0,
+                                           'exposure brackets': 2, 'capture dark frame': True})
+
+        # three wavelengths x two brackets x one frame, in that nesting
+        self.assertEqual([1550.0, 1550.0, 1555.0, 1555.0, 1560.0, 1560.0],
+                         data['values']['wavelength nm'])
+        self.assertEqual([0, 1, 0, 1, 0, 1], data['values']['bracket index'])
+        self.assertEqual(list(range(6)), data['values']['frame index'])
+        for series in data['values'].values():
+            self.assertEqual(6, len(series))
+
+        # the laser was tuned once per step, and the first wavelength was set before it came on
+        self.assertEqual([1550.0, 1555.0, 1560.0], self.laser.wavelengths_set)
+        self.assertEqual([1550.0, 1555.0, 1560.0],
+                         data['measurement settings']['wavelengths nm'])
+        self.assertEqual(3, data['measurement settings']['wavelength count'])
+
+    def test_dark_frames_are_taken_once_for_the_whole_sweep(self):
+        data, _, _ = self.run_algorithm(**{'wavelength stop': 1570.0, 'wavelength step': 10.0,
+                                           'wavelength settle time': 0.0,
+                                           'exposure brackets': 3, 'capture dark frame': True})
+
+        # one per bracket, not one per bracket per wavelength: the dark depends on the exposure and
+        # the gain, and not on the wavelength
+        self.assertEqual(3, len(data['measurement settings']['dark frames']))
+        self.assertEqual([0, 1, 2],
+                         [d['bracket index'] for d in data['measurement settings']['dark frames']])
+        # and every frame of the sweep is corrected by its bracket's dark
+        self.assertEqual(9, len(data['values']['dark corrected roi sum counts']))
+
+    def test_single_wavelength_run_is_unchanged(self):
+        data, _, _ = self.run_algorithm()
+
+        self.assertEqual([1550.0], data['values']['wavelength nm'])
+        self.assertEqual(1, data['measurement settings']['wavelength count'])
+        # set once, before the laser was switched on, and not touched again
+        self.assertEqual([1550.0], self.laser.wavelengths_set)
+
+    def test_sweep_beyond_the_lasers_range_is_refused_before_capturing(self):
+        camera = StubCamera()
+        with self.assertRaises(ValueError):
+            # the stub laser tunes to 1630 nm
+            self.run_algorithm(camera=camera, **{'wavelength stop': 1700.0,
+                                                 'wavelength step': 10.0,
+                                                 'save TIFF': True})
+        self.assertEqual([], camera.saved_files)
+
+    def test_auto_exposure_runs_once_for_the_whole_sweep(self):
+        data, _, camera = self.run_algorithm(**{
+            'exposure time': 100.0, 'auto exposure': True,
+            'wavelength stop': 1560.0, 'wavelength step': 5.0, 'wavelength settle time': 0.0})
+
+        settled = data['measurement settings']['auto exposure result']['exposure time us']
+        # one exposure for every wavelength, so a systematic in it cancels between them
+        self.assertEqual([settled] * 3, data['values']['exposure time us'])
+        self.assertEqual(settled, camera.exposure_time)
 
     #
     # integration ROI

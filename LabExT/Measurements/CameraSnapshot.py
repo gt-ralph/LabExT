@@ -7,6 +7,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 
 import json
 import logging
+import math
 import os
 import re
 from contextlib import nullcontext
@@ -60,10 +61,10 @@ class CameraSnapshot(Measurement):
     """
     ## CameraSnapshot
 
-    Captures one or more frames from a camera as part of a regular LabExT measurement run. The
-    images are written next to the measurement's own result file, and the data file records per
-    frame statistics plus the file names, so an image can always be traced back to the settings it
-    was taken with.
+    Captures one or more frames from a camera as part of a regular LabExT measurement run, at a
+    single wavelength or stepping over a range of them. The images are written next to the
+    measurement's own result file, and the data file records per frame statistics plus the file
+    names, so an image can always be traced back to the settings it was taken with.
 
     The images themselves are deliberately kept out of the result file: a single frame of this
     camera is over a megapixel, which would make the JSON unusable.
@@ -97,7 +98,19 @@ class CameraSnapshot(Measurement):
     * **laser enabled**: Whether the laser drives the chip while the frames are captured. Search
       for Peak switches the light off when it finishes, so a measurement that wants light has to
       turn it back on; untick this to capture the sensor in the dark.
-    * **laser wavelength / laser power**: What the laser is set to before it is switched on.
+    * **laser wavelength / laser power**: What the laser is set to before it is switched on, and the
+      first wavelength of a sweep. Sweeping this through the experiment wizard instead is a trap:
+      that makes one to-do per wavelength, and the stages are moved and Search for Peak is run once
+      per to-do, so the spectrum would record the alignment as much as the device. Use *wavelength
+      stop* below.
+    * **wavelength stop**: The last wavelength to capture at. Leave at 0 to capture at *laser
+      wavelength* only, which is what a plain snapshot does. Otherwise the measurement steps from
+      *laser wavelength* to here, in either direction, and captures the full set of brackets at
+      every step - one to-do, one result file, one alignment for the whole spectrum.
+    * **wavelength step**: Distance between wavelengths, as a positive number whichever way the
+      sweep runs.
+    * **wavelength settle time**: Seconds to wait after each step before capturing. A frame taken
+      while the laser is still tuning was taken at a wavelength nobody recorded.
     * **laser settle time**: Seconds to wait after the laser is switched on, and again after it is
       switched off before a dark frame. The dark frames are what this is really for: it is what
       keeps the tail of the light out of them.
@@ -141,11 +154,24 @@ class CameraSnapshot(Measurement):
     #### bracketing for a relative wavelength response
 
     Counts follow power only between the noise floor and the well limit, a range of about two
-    decades - far less than a transmission spectrum covers. Sweeping *laser wavelength* with
-    several brackets captures every point at several exposures, and analysis keeps, per point, the
-    longest bracket that is not clipped: `saturated pixel fraction` says which those are,
-    `exposure time us` turns its counts back into a rate, and the dark frame at the same exposure
-    removes the pedestal first. `roi counts per second` is that rate, computed here.
+    decades - far less than a transmission spectrum covers. Setting *wavelength stop* and using
+    several brackets captures every wavelength at several exposures, and analysis keeps, per
+    wavelength, the longest bracket that is not clipped: `saturated pixel fraction` says which
+    those are, `exposure time us` turns its counts back into a rate, and the dark frame at the same
+    exposure removes the pedestal first. `roi counts per second` is that rate, computed here, and
+    `wavelength nm` is the axis to plot it against.
+
+    The sweep runs inside the measurement, which is what keeps the alignment out of the result: one
+    to-do per device means the stages are moved and Search for Peak is run once, before the whole
+    spectrum, rather than between wavelengths. Auto exposure, if it is on, likewise runs once
+    before the sweep, and the bracket ladder is fixed for all of it - the same exposures at every
+    wavelength are what make two wavelengths comparable, since whatever systematic an exposure
+    carries is then identical at both and cancels in the ratio.
+
+    The dark frames are taken once, per bracket, after the sweep. The dark does not depend on
+    wavelength, only on exposure and gain, so one set serves the whole spectrum; over a long sweep
+    that does assume the sensor's dark level has not drifted, which a second sweep in the other
+    direction will show up.
 
     Use the ROI series rather than the whole-frame ones. Measured on this setup with three brackets
     a factor of four apart: summed over a region around the spot the rate holds to about 6% across
@@ -227,6 +253,18 @@ class CameraSnapshot(Measurement):
             'laser enabled': MeasParamBool(value=True),
             'laser wavelength': MeasParamFloat(value=1550.0, unit='nm'),
             'laser power': MeasParamFloat(value=-15.0, unit='dBm'),
+            # The sweep runs inside the measurement rather than through the experiment wizard's
+            # parameter sweep, which would make one to-do per wavelength: the stages are moved and
+            # Search for Peak is run once per to-do, so a wizard sweep re-aligns between wavelengths
+            # and the spectrum that comes out is a record of the alignment as much as of the device.
+            # One to-do per device also puts the whole spectrum in one result file.
+            # Named 'wavelength stop' rather than renaming 'laser wavelength' to 'wavelength start'
+            # so that a single-wavelength capture, and a saved settings file, keep working unchanged.
+            'wavelength stop': MeasParamFloat(value=0.0, unit='nm'),
+            'wavelength step': MeasParamFloat(value=5.0, unit='nm'),
+            # Tuning is not instant and a frame taken while the laser is still settling is taken at
+            # a wavelength nobody recorded, so this waits after every step.
+            'wavelength settle time': MeasParamFloat(value=0.2, unit='s'),
             # Time for the laser to settle after being switched on or off. The dark frames are
             # taken right after the light goes out, so this is what keeps residual light out of
             # them, not just a courtesy delay.
@@ -304,6 +342,9 @@ class CameraSnapshot(Measurement):
         return {
             # Settings which say how a point is captured rather than what it is captured at, so
             # there is nothing to plot against them - sweeping them would just relabel the axis.
+            'wavelength stop': def_params['wavelength stop'],
+            'wavelength step': def_params['wavelength step'],
+            'wavelength settle time': def_params['wavelength settle time'],
             'integration ROI x': def_params['integration ROI x'],
             'integration ROI y': def_params['integration ROI y'],
             'integration ROI width': def_params['integration ROI width'],
@@ -359,6 +400,70 @@ class CameraSnapshot(Measurement):
             directory = os.path.abspath(os.path.join(default_directory, output_directory))
         os.makedirs(directory, exist_ok=True)
         return directory, stem
+
+    #: refuse a sweep longer than this. Each wavelength costs a settle plus every bracket and
+    #: frame, so a step which is a thousand times too small is a runaway rather than a long run.
+    MAX_SWEEP_POINTS = 2000
+
+    @classmethod
+    def _sweep_wavelengths(cls, start, stop, step):
+        """The wavelengths to capture at, in the order they are set.
+
+        A stop at or below zero means no sweep at all, which is the single-wavelength capture this
+        measurement has always done. Otherwise it walks from `start` to `stop` inclusive, in either
+        direction, so a descending sweep needs no negative step.
+
+        Returns:
+            list: wavelengths in nm, always at least one long
+        """
+        start = float(start)
+        stop = float(stop)
+        if stop <= 0.0 or stop == start:
+            return [start]
+        step = abs(float(step))
+        if step <= 0.0:
+            raise ValueError(
+                "wavelength step must be greater than 0 to sweep from {:.3f} nm to {:.3f} nm, got "
+                "{:.3f} nm.".format(start, stop, step))
+
+        span = abs(stop - start)
+        count = int(math.floor(span / step + 1e-9)) + 1
+        if count > cls.MAX_SWEEP_POINTS:
+            raise ValueError(
+                "A sweep from {:.3f} nm to {:.3f} nm in steps of {:.3f} nm is {:d} wavelengths, "
+                "more than the {:d} this measurement will run. Use a larger step.".format(
+                    start, stop, step, count, cls.MAX_SWEEP_POINTS))
+
+        direction = 1.0 if stop > start else -1.0
+        wavelengths = [start + direction * step * index for index in range(count)]
+        # the last step rarely lands exactly on the stop; include it when there is room left for it,
+        # so a sweep to 1570 nm actually reaches 1570 nm rather than stopping just short
+        if abs(wavelengths[-1] - stop) > 1e-9 and abs(stop - start) >= abs(wavelengths[-1] - start):
+            wavelengths.append(stop)
+        return wavelengths
+
+    def _check_wavelengths_tunable(self, wavelengths):
+        """Refuse a sweep the laser cannot tune over, before any of it is captured.
+
+        Otherwise the run gets as far as the first wavelength outside the laser's range and fails
+        there, having spent the intervening minutes on frames that are then thrown away.
+        """
+        try:
+            minimum = float(self.instr_laser.min_lambda)
+            maximum = float(self.instr_laser.max_lambda)
+        except Exception:
+            # not every laser driver reports its range, and a failed read must not stop a sweep
+            # which the laser may well be able to do
+            self.logger.debug("Could not read the laser's tuning range.", exc_info=True)
+            return
+        outside = [wl for wl in wavelengths if wl < minimum or wl > maximum]
+        if outside:
+            raise ValueError(
+                "The laser tunes from {:.3f} nm to {:.3f} nm, so it cannot reach {:s} of the {:d} "
+                "wavelengths asked for, starting at {:.3f} nm.".format(
+                    minimum, maximum,
+                    "any" if len(outside) == len(wavelengths) else "{:d}".format(len(outside)),
+                    len(wavelengths), outside[0]))
 
     @staticmethod
     def _resolve_integration_roi(x, y, width, height, frame_width, frame_height):
@@ -573,6 +678,9 @@ class CameraSnapshot(Measurement):
         laser_wavelength = parameters.get('laser wavelength').value
         laser_power = parameters.get('laser power').value
         laser_settle_time = parameters.get('laser settle time').value
+        wavelength_stop = parameters.get('wavelength stop').value
+        wavelength_step = parameters.get('wavelength step').value
+        wavelength_settle_time = parameters.get('wavelength settle time').value
         auto_exposure = parameters.get('auto exposure').value
         auto_exposure_target_fill = parameters.get('auto exposure target fill').value
         auto_exposure_max = parameters.get('auto exposure max').value
@@ -595,6 +703,12 @@ class CameraSnapshot(Measurement):
         if laser_settle_time < 0.0:
             raise ValueError(
                 "laser settle time cannot be negative, got {:.3f} s.".format(laser_settle_time))
+        if wavelength_settle_time < 0.0:
+            raise ValueError(
+                "wavelength settle time cannot be negative, got {:.3f} s.".format(
+                    wavelength_settle_time))
+        # raises on a step which cannot get from one end to the other, before the camera is touched
+        wavelengths = self._sweep_wavelengths(laser_wavelength, wavelength_stop, wavelength_step)
         # Only the longest exposure needs checking against the timeout: the brackets below it are
         # shorter, and auto exposure is bounded by its own maximum.
         if frame_timeout <= exposure_time / 1000.0:
@@ -632,7 +746,8 @@ class CameraSnapshot(Measurement):
 
         if laser_enabled:
             self.instr_laser.unit = 'dBm'
-            self.instr_laser.wavelength = laser_wavelength
+            self._check_wavelengths_tunable(wavelengths)
+            self.instr_laser.wavelength = wavelengths[0]
             self.instr_laser.power = laser_power
 
         # Apply settings. The order matters: changing the pixel format or the ROI can move the
@@ -715,6 +830,7 @@ class CameraSnapshot(Measurement):
         # data is an AutosaveDict which re-serialises the whole result file every few accesses, so
         # touching it inside the loop would rewrite the file once per frame.
         frame_indices = []
+        frame_wavelengths = []
         bracket_indices = []
         frame_exposures = []
         timestamps = []
@@ -759,85 +875,103 @@ class CameraSnapshot(Measurement):
 
             roi_x, roi_y, roi_width, roi_height = integration_roi
 
+            # One ladder for the whole sweep, and one auto exposure above it: the same exposures at
+            # every wavelength are what make two wavelengths comparable, since whatever systematic
+            # an exposure carries is then identical at both and cancels in the ratio.
             bracket_exposures = self._bracket_exposures(n_brackets, bracket_factor)
 
             image = None
-            for bracket, bracket_exposure in enumerate(bracket_exposures):
-                if bracket > 0 and frame_delay > 0.0:
-                    # a bracket boundary is a gap between two frames like any other
-                    sleep(frame_delay)
-                if len(bracket_exposures) > 1:
-                    self.instr_camera.exposure_time = bracket_exposure
-                # Read back per bracket rather than trusting the request: this is the exposure the
-                # counts have to be divided by, and the camera snaps it onto its increment grid.
-                actual_exposure = float(self.instr_camera.exposure_time)
+            for index, wavelength in enumerate(wavelengths):
+                # The first wavelength was set before the laser was switched on, and the settle
+                # after switching on covers it, so only the steps after it need tuning and waiting.
+                if laser_enabled and index > 0:
+                    self.instr_laser.wavelength = wavelength
+                    if wavelength_settle_time > 0.0:
+                        sleep(wavelength_settle_time)
+                first_index_here = len(frame_indices)
 
-                if frame_delay > 0.0:
-                    images = None  # captured one at a time below, so the delay is actually honoured
-                else:
-                    images = self.instr_camera.snap_photos(
-                        n_frames, timeout_ms=int(frame_timeout))
+                for bracket, bracket_exposure in enumerate(bracket_exposures):
+                    if len(frame_indices) > first_index_here and frame_delay > 0.0:
+                        # a bracket boundary is a gap between two frames like any other
+                        sleep(frame_delay)
+                    if len(bracket_exposures) > 1:
+                        self.instr_camera.exposure_time = bracket_exposure
+                    # Read back per bracket rather than trusting the request: this is the exposure
+                    # the counts are divided by, and the camera snaps it onto its increment grid.
+                    actual_exposure = float(self.instr_camera.exposure_time)
 
-                for idx in range(n_frames):
-                    if images is None:
-                        if idx > 0:
-                            sleep(frame_delay)
-                        image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+                    if frame_delay > 0.0:
+                        images = None  # captured one at a time below, so the delay is honoured
                     else:
-                        image = images[idx]
+                        images = self.instr_camera.snap_photos(
+                            n_frames, timeout_ms=int(frame_timeout))
 
-                    full_scale = _full_scale_counts(
-                        parameters.get('pixel format').value, image.dtype)
-                    clip_level = _clip_level(full_scale)
+                    for idx in range(n_frames):
+                        if images is None:
+                            if idx > 0:
+                                sleep(frame_delay)
+                            image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+                        else:
+                            image = images[idx]
 
-                    # Numbered straight through the brackets, so a frame index is unique within
-                    # the result file and unchanged from a run without bracketing. Which exposure
-                    # a frame was taken at is in 'bracket index' and 'exposure time us'.
-                    frame_number = len(frame_indices)
-                    frame_files = self._save_frame(
-                        os.path.join(directory, "{:s}_frame{:03d}".format(stem, frame_number)),
-                        image, save_tiff, save_png, save_npy)
+                        full_scale = _full_scale_counts(
+                            parameters.get('pixel format').value, image.dtype)
+                        clip_level = _clip_level(full_scale)
 
-                    frame_indices.append(int(frame_number))
-                    bracket_indices.append(int(bracket))
-                    frame_exposures.append(actual_exposure)
-                    timestamps.append(datetime.now(timezone.utc).isoformat())
-                    file_names.append(frame_files)
-                    # numpy float64 -> python float, else the result file is not serialisable
-                    mean_counts.append(float(np.mean(image)))
-                    min_counts.append(float(np.min(image)))
-                    max_counts.append(float(np.max(image)))
-                    std_counts.append(float(np.std(image)))
-                    # Summed with the power meter's own helper, so a number here and a number the
-                    # peak search acts on are the same computation. Raw: the dark frames are not
-                    # taken until the light is off, and subtracting a sum from a sum afterwards is
-                    # exact, so nothing has to be held in memory for it.
-                    roi_sums.append(PowerMeterCameraAlvium.integrate_patch(
-                        image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]))
-                    saturated = int(np.count_nonzero(image >= clip_level))
-                    saturated_fractions.append(float(saturated / image.size))
-                    if saturated and len(bracket_exposures) == 1:
-                        # Worth a warning rather than only a number in the results: clipped counts
-                        # are no longer proportional to power, so a sweep comparing frames to each
-                        # other is silently wrong at the bright end unless the exposure comes down.
-                        # With brackets there is nothing to warn about yet - a clipped long bracket
-                        # is what the short ones are for - so that case is summarised below.
-                        self.logger.warning(
-                            "Frame %d of %d is clipped: %d pixels (%.3f%%) at or above full scale "
-                            "(%.0f counts for %s). Reduce the exposure time (%.1f us) or gain "
-                            "(%.2f dB); counts are not proportional to power once clipped.",
-                            idx + 1, n_frames, saturated, 100.0 * saturated / image.size,
-                            clip_level, parameters.get('pixel format').value,
-                            actual_exposure, float(self.instr_camera.gain))
+                        # Numbered straight through the sweep, so a frame index is unique within
+                        # the result file and unchanged from a single-point run. Which wavelength
+                        # and exposure a frame was taken at is in the series beside it.
+                        frame_number = len(frame_indices)
+                        frame_files = self._save_frame(
+                            os.path.join(directory, "{:s}_frame{:03d}".format(stem, frame_number)),
+                            image, save_tiff, save_png, save_npy)
 
-        if len(bracket_exposures) > 1 and all(f > 0.0 for f in saturated_fractions):
-            # No bracket got through unclipped, so this point has no usable measurement in it at
-            # all - the shortest bracket is still too long. Said once, after the fact, because it
-            # is a property of the ladder rather than of any one frame.
-            self.logger.warning(
-                "Every one of the %d exposure brackets clipped at this point, down to %.1f us, so "
-                "none of them measures the power here. Shorten 'exposure time' or add brackets.",
-                len(bracket_exposures), frame_exposures[-1])
+                        frame_indices.append(int(frame_number))
+                        frame_wavelengths.append(float(wavelength))
+                        bracket_indices.append(int(bracket))
+                        frame_exposures.append(actual_exposure)
+                        timestamps.append(datetime.now(timezone.utc).isoformat())
+                        file_names.append(frame_files)
+                        # numpy float64 -> python float, else the result file is not serialisable
+                        mean_counts.append(float(np.mean(image)))
+                        min_counts.append(float(np.min(image)))
+                        max_counts.append(float(np.max(image)))
+                        std_counts.append(float(np.std(image)))
+                        # Summed with the power meter's own helper, so a number here and a number
+                        # the peak search acts on are the same computation. Raw: the dark frames
+                        # are not taken until the light is off, and subtracting a sum from a sum
+                        # afterwards is exact, so nothing has to be held in memory for it.
+                        roi_sums.append(PowerMeterCameraAlvium.integrate_patch(
+                            image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]))
+                        saturated = int(np.count_nonzero(image >= clip_level))
+                        saturated_fractions.append(float(saturated / image.size))
+                        if saturated and len(bracket_exposures) == 1:
+                            # Worth a warning rather than only a number in the results: clipped
+                            # counts are no longer proportional to power, so a sweep comparing
+                            # frames to each other is silently wrong at the bright end unless the
+                            # exposure comes down. With brackets there is nothing to warn about yet
+                            # - a clipped long bracket is what the short ones are for - so that
+                            # case is summarised per wavelength below.
+                            self.logger.warning(
+                                "Frame %d of %d at %.3f nm is clipped: %d pixels (%.3f%%) at or "
+                                "above full scale (%.0f counts for %s). Reduce the exposure time "
+                                "(%.1f us) or gain (%.2f dB); counts are not proportional to power "
+                                "once clipped.",
+                                idx + 1, n_frames, wavelength, saturated,
+                                100.0 * saturated / image.size, clip_level,
+                                parameters.get('pixel format').value,
+                                actual_exposure, float(self.instr_camera.gain))
+
+                if (len(bracket_exposures) > 1
+                        and all(f > 0.0 for f in saturated_fractions[first_index_here:])):
+                    # No bracket got through unclipped, so this wavelength has no usable
+                    # measurement in it at all - the shortest bracket is still too long. Reported
+                    # per wavelength, because it is a property of the ladder against this point
+                    # rather than of any one frame, and a spectrum can clip at one end only.
+                    self.logger.warning(
+                        "Every one of the %d exposure brackets clipped at %.3f nm, down to %.1f "
+                        "us, so none of them measures the power there. Shorten 'exposure time' or "
+                        "add brackets.", len(bracket_exposures), wavelength, frame_exposures[-1])
 
         # Dark frames come after the signal frames and outside the laser context, which has just
         # switched the light off, and there is one per bracket: the dark current scales with the
@@ -892,6 +1026,8 @@ class CameraSnapshot(Measurement):
         # timestamps are metadata about the capture rather than measured values, so they belong
         # alongside the other settings.
         data['values']['frame index'] = frame_indices
+        # first, so it is the natural x axis for a spectrum in the plots
+        data['values']['wavelength nm'] = frame_wavelengths
         data['values']['bracket index'] = bracket_indices
         data['values']['exposure time us'] = frame_exposures
         data['values']['mean counts'] = mean_counts
@@ -940,6 +1076,10 @@ class CameraSnapshot(Measurement):
         data['measurement settings']['frame timestamps utc'] = timestamps
         # fewer than requested if the ladder ran into the camera's shortest exposure
         data['measurement settings']['exposure brackets captured'] = int(len(bracket_exposures))
+        # the wavelengths as they were actually set, which the last step of a sweep can nudge off
+        # the requested grid, and one number to say whether this was a sweep at all
+        data['measurement settings']['wavelengths nm'] = [float(wl) for wl in wavelengths]
+        data['measurement settings']['wavelength count'] = int(len(wavelengths))
         # the region every sum above was taken over, and how many pixels it holds, so a sum can be
         # turned back into counts per pixel without re-deriving it from the four settings
         data['measurement settings']['integration roi'] = [int(v) for v in integration_roi]

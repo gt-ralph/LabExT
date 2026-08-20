@@ -5,27 +5,28 @@ Vision Alvium, and get a relative spectral response out of it rather than a set 
 pictures. The numbers quoted are measured on the happi setup on 2026-08-20; treat them as the scale
 of each effect rather than as constants.
 
-## Decide first: what is the alignment doing during the sweep?
+## Sweep the wavelength inside the measurement, not through the wizard
 
-This decides whether the result means anything, and it is easy to get wrong because the default
-looks harmless.
+Set **wavelength stop** and **wavelength step** in `CameraSnapshot`. The measurement then steps the
+laser itself and captures the full bracket set at every wavelength, which is what keeps the
+alignment out of the result:
 
-**Search for Peak runs once per to-do, not once per device.** A swept parameter creates one to-do
-per value, so a 20-wavelength sweep over 5 devices is 100 to-dos - and with *execute search for
-peak* enabled, 100 searches, each of which moves the stages. The coupling at every wavelength is
-then whatever its own search found, so the curve mixes alignment with wavelength.
+- **One to-do per device.** The stages are moved and Search for Peak is run once per to-do
+  ([`StandardExperiment.run`](https://github.com/LabExT/LabExT)), so with the sweep inside the
+  measurement they happen once per device, before the whole spectrum - not between wavelengths.
+- **One result file per device**, with `wavelength nm` as a series beside the counts, so the
+  spectrum plots live in the main window and needs no stitching afterwards.
+- **One exposure ladder and one auto exposure** for the whole spectrum. That matters: whatever
+  systematic an exposure carries is then identical at every wavelength and cancels in the ratio
+  between two of them.
 
-Pick the measurement you actually want:
+Sweeping **laser wavelength** through the experiment wizard's parameter sweep instead is the trap
+this avoids. That makes one to-do per wavelength, so with *execute search for peak* enabled a
+20-wavelength run over 5 devices is 100 searches, each moving the stages, and the curve records the
+alignment as much as the device.
 
-| you want | setting |
-|---|---|
-| **Relative spectral response** at fixed alignment | *execute search for peak* **off** for the sweep; align each device once beforehand |
-| Best achievable coupling at each wavelength | *execute search for peak* on, and do not call the result a device response |
-
-There is currently no "align once per device, then sweep" mode. Until there is, run it per device:
-align the device (Search for Peak window, or the Camera View plus the stage controls), then queue
-that device's wavelength sweep with search for peak off, then move to the next device. *Pause after
-each device* in the execution control settings gives you the break to do it in.
+So: *auto move stages to device* on, *execute search for peak* on, and the sweep set up in the
+measurement. Search for Peak then runs once per device, which is what you want.
 
 ## Camera View, before the run
 
@@ -45,12 +46,16 @@ each device* in the execution control settings gives you the break to do it in.
 | parameter | value | why |
 |---|---|---|
 | pixel format | `Mono12` | 4095 counts of range; `Mono8` throws away four bits |
+| laser wavelength | first wavelength of the sweep | also the wavelength auto exposure sets the exposure at, so make it the bright end if you use it |
+| **wavelength stop** | last wavelength | 0 means no sweep; either direction works |
+| **wavelength step** | e.g. 5 nm | positive whichever way the sweep runs; every wavelength costs a settle plus every bracket and frame |
+| **wavelength settle time** | 0.2 s | a frame taken while the laser is still tuning was taken at a wavelength nobody recorded |
 | exposure time | peak at 60-70% at the brightest wavelength | this is the **longest** bracket; the ladder descends from it |
 | gain | leave at 0 dB | gain costs dynamic range and buys nothing a longer exposure does not |
 | **exposure brackets** | **3** | spans 16× with factor 4; use 4 brackets if the spectrum spans more than ~25 dB |
 | **exposure bracket factor** | **4** | |
-| **capture dark frame** | **on** | one dark per bracket; the dark current scales with exposure, so one dark cannot serve two brackets |
-| **auto exposure** | **off** | a fixed ladder is identical at every wavelength, which is what makes two points comparable |
+| **capture dark frame** | **on** | one dark per bracket, taken once after the sweep - the dark depends on exposure and gain, not on wavelength |
+| **auto exposure** | on for multi-device, off for a single device | it runs once before the sweep, so it adapts to each device while leaving the ladder fixed within a spectrum |
 | laser settle time | 0.2 s | enough on this setup - the darks came out at the expected black level with no light-leak warning |
 | **fit integration ROI to spot** | **on** for multi-device | each device emits into a different part of the frame, so a hand-set box only serves one of them |
 | integration ROI x/y/width/height | set explicitly, fit **off**, for a single device | a box fixed for the whole sweep cannot put its own area into the response |
@@ -60,27 +65,33 @@ each device* in the execution control settings gives you the break to do it in.
 | image output directory | e.g. `images` | a relative name lands next to the result file |
 | close camera after measurement | off | keeps LabExT from re-opening the camera for every metadata read |
 
-Sweep **laser wavelength** in the experiment wizard. The capture-shape settings - brackets, bracket
-factor, dark frame, auto exposure, settle time, integration ROI, frame count, save flags - are
-marked non-sweepable and will not appear as sweep axes.
+In the wizard, select the devices and add `CameraSnapshot`; leave its parameter sweep empty. The
+capture-shape settings - brackets, bracket factor, dark frame, auto exposure, settle times, sweep
+bounds, integration ROI, frame count, save flags - are marked non-sweepable and will not appear as
+sweep axes.
 
 ### Data budget
 
-A frame is 1032×1296×2 bytes = 2.7 MB, and a point with 3 brackets × 3 frames plus 3 darks is 12
-frames = 32 MB of TIFF. Twenty wavelengths over five devices is 3.2 GB. The result file already
-carries everything the analysis needs - per-frame ROI sums, dark sums, exposures, saturation
+A frame is 1032×1296×2 bytes = 2.7 MB. One device with 20 wavelengths × 3 brackets × 1 frame, plus
+3 darks, is 63 frames = 170 MB of TIFF; five devices is 850 MB. The result file already carries
+everything the analysis needs - per-frame ROI sums, dark sums, exposures, wavelengths, saturation
 fractions - so turn the save flags **off** for the bulk run and keep images only for the one
-validation point you check by hand.
+validation device you check by hand.
+
+Time per device is roughly `wavelengths × (settle + brackets × frames × exposure)` plus the search,
+so a 20-point sweep with 3 brackets at 6 ms and 0.2 s settles is about 5 s of laser and camera time
+per device, not counting the search.
 
 ## What to check when it finishes
 
-Per point, in the result file:
+One file per device, with `wavelength nm`, `bracket index` and `exposure time us` saying what each
+row is:
 
 - **`saturated pixel fraction`** - which brackets clipped. A clipped bracket 0 is normal and is what
-  the shorter brackets are for. Every bracket clipped means the point was not measured, and the log
-  says so.
-- **`roi counts per second`** - the series to plot against wavelength. Agreement between the
-  brackets of one point is the linearity check: they should land within a few percent.
+  the shorter brackets are for. Every bracket clipped at a wavelength means that point was not
+  measured, and the log names the wavelength.
+- **`roi counts per second`** - the series to plot against `wavelength nm`. Agreement between the
+  brackets at one wavelength is the linearity check: they should land within a few percent.
 - **`integration roi`** - if the ROI is being refitted per point, watch for its width and height
   wandering. The fraction of the beam a box holds depends strongly on its size (15% at 40 px, 68%
   at 138 px on this spot), and that fraction goes straight into the response.
@@ -89,8 +100,8 @@ Per point, in the result file:
 - **`mean counts per second`** - do not use this one. It is whole-frame and it is not comparable
   between brackets, for the reason below.
 
-Analysis recipe: per point, take the longest bracket whose `saturated pixel fraction` is zero, and
-use its `roi counts per second`. A reference sweep with the device out of the path turns the result
+Analysis recipe: per wavelength, take the longest bracket whose `saturated pixel fraction` is zero,
+and use its `roi counts per second`. A reference sweep with the device out of the path turns the result
 into the device's own response rather than the response of everything in the path, the laser's
 power flatness included.
 
@@ -116,6 +127,13 @@ shorter exposure inflates it. Inside a region around the beam it is under 1% of 
 
 ## Traps
 
+- **Sweeping `laser wavelength` through the wizard** gives one to-do per wavelength, and so one
+  stage move and one search per wavelength. Use `wavelength stop` instead.
+- **A long sweep cannot be stopped part-way.** The experiment checks for a stop between to-dos, and
+  the sweep is inside one, so it finishes the device it is on. Shorter sweeps per device if that
+  matters.
+- **One dark set serves the whole sweep**, which assumes the sensor's dark level has not drifted
+  over it. A sweep repeated in the other direction shows up drift as a difference between the two.
 - **The viewer streaming** silently costs you bracketing and auto exposure. It is logged as a
   warning; check the log if a run comes back with one bracket.
 - **A saved instrument selection shadows `instruments.config`.** Removing an instrument from the
