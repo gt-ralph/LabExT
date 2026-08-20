@@ -80,7 +80,7 @@ class CardFrame(Frame):
         self.controller: LiveViewerController = controller
 
         # root window where I will be placed
-        self._root: Tk = parent
+        self._ui_parent: Tk = parent
         # logger, is always handy
         self.logger: Logger = logging.getLogger()
 
@@ -121,7 +121,7 @@ class CardFrame(Frame):
         # row 1: instrument selector
         self.available_instruments: Dict[str, InstrumentRole] = dict()
         io_set = get_visa_address(self.INSTRUMENT_TYPE)
-        self.available_instruments.update({self.INSTRUMENT_TYPE: InstrumentRole(self._root, io_set)})
+        self.available_instruments.update({self.INSTRUMENT_TYPE: InstrumentRole(self._ui_parent, io_set)})
 
         self.instr_selec = InstrumentSelector(self)
         self.instr_selec.title = 'Instrument'

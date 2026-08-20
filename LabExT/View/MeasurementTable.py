@@ -50,7 +50,7 @@ class MeasurementTable(CustomFrame):
 
         self.logger = logging.getLogger()
 
-        self._root = parent
+        self._ui_parent = parent
         self._total_col_width = total_col_width
         self._experiment_manager = experiment_manager
         self._measurements = self._experiment_manager.exp.measurements
@@ -386,7 +386,7 @@ class MeasurementTable(CustomFrame):
                     self.click_on_meas_by_hash(item_iid)  # toggle plot off
                     self.click_on_meas_by_hash(item_iid)  # toggle plot on
 
-            CommentsEditor(parent=self._root,
+            CommentsEditor(parent=self._ui_parent,
                            measurement_dict=self._hashes_of_meas[item_iid],
                            callback_on_save=redraw_table_and_plot)
 

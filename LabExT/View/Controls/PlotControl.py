@@ -318,7 +318,7 @@ class PlotControl(Frame):
         super(PlotControl, self).__init__(parent)  # call the parent controls constructor
         self._title = None
         self._hold = False
-        self._root = parent  # keep a reference for the ui root
+        self._ui_parent = parent  # keep a reference for the ui root
         self._enable_toolbar = add_toolbar  # member to store whether a plot toolbar should be added or not
         self._figsize = figsize  # figure size
         self._dpi = dpi  # dpi resolution
@@ -348,7 +348,7 @@ class PlotControl(Frame):
         if not self._polling:
             # if we are polling, all plot updates happen in the GUI thread anyhow, so no need to call the foreign
             # functions updater
-            self.foreign_exec_ref = self._root.after(self._foreign_function_execution_period_ms, self.__execute_foreign_functions__)
+            self.foreign_exec_ref = self._ui_parent.after(self._foreign_function_execution_period_ms, self.__execute_foreign_functions__)
 
         self._x_label = "x"
         self._y_label = "y"
@@ -380,13 +380,13 @@ class PlotControl(Frame):
         if self._polling and not self._polling_running:
             self._polling_kill_flag = False
             self._polling_running = True
-            self._polling_exec_ref = self._root.after(self._polling_time_ms, self.__polling__)
+            self._polling_exec_ref = self._ui_parent.after(self._polling_time_ms, self.__polling__)
 
     def destroy(self):
-        self._root.after_cancel(self.foreign_exec_ref)
+        self._ui_parent.after_cancel(self.foreign_exec_ref)
         self._polling_kill_flag = True
         if self._polling_exec_ref is not None:
-            self._root.after_cancel(self._polling_exec_ref)
+            self._ui_parent.after_cancel(self._polling_exec_ref)
         Frame.destroy(self)
 
     @execute_in_plotting_thread
@@ -414,7 +414,7 @@ class PlotControl(Frame):
         except queue.Empty:
             pass
         # this reschedules this function to run again after 10ms
-        self.foreign_exec_ref = self._root.after(self._foreign_function_execution_period_ms, self.__execute_foreign_functions__)
+        self.foreign_exec_ref = self._ui_parent.after(self._foreign_function_execution_period_ms, self.__execute_foreign_functions__)
 
     def __polling__(self):
         """ Polls and updates data """
@@ -424,7 +424,7 @@ class PlotControl(Frame):
             self.__update_canvas__()
         if not self._polling_kill_flag:
             # reschedule if not killed
-            self._polling_exec_ref = self._root.after(self._polling_time_ms, self.__polling__)
+            self._polling_exec_ref = self._ui_parent.after(self._polling_time_ms, self.__polling__)
         else:
             # otherwise set running flag to false to signal completion
             self._polling_running = False

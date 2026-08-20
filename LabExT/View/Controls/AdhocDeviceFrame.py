@@ -19,7 +19,7 @@ class AdhocDeviceFrame(CustomFrame):
 
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self._root = parent
+        self._ui_parent = parent
 
         # custom parameter fields
         self._entry_id = None

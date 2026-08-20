@@ -43,7 +43,7 @@ class ToDoTable(CustomFrame):
 
         self._total_col_width = total_col_width
         self._selection_mode = selec_mode
-        self._root = parent
+        self._ui_parent = parent
         self._experiment_manager = experiment_manager
         self._double_click_callback = double_click_callback
         self._meas_control_settings = MeasurementControlSettings()

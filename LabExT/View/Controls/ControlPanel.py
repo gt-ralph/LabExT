@@ -106,7 +106,7 @@ class ControlPanel(CustomFrame):
             Names, forwarded to superclass
         """
         super().__init__(parent, *args, **kwargs)
-        self._root = parent
+        self._ui_parent = parent
         self.__setup__()
 
     def __setup__(self):

@@ -49,7 +49,7 @@ class SettingsWindow(ScrollableFrame):
         self.logger.debug('SettingsWindow initialised with parent: %s experiment_manager: %s',
                           parent, experiment_manager)
 
-        self._root = parent
+        self._ui_parent = parent
         self._experiment_manager = experiment_manager
         if edit_meas_list is None:
             # edit all open measurements in experiment_manager
@@ -64,7 +64,7 @@ class SettingsWindow(ScrollableFrame):
 
         self.force_noload = force_noload
         self.callback = callback
-        self._root.title = 'Settings'
+        self._ui_parent.title = 'Settings'
 
         parent.rowconfigure(1, weight=1)
         parent.columnconfigure(0, weight=1)
@@ -113,7 +113,7 @@ class SettingsWindow(ScrollableFrame):
                     self.logger.info('Saving parameters of measurement {:s} to file.'.format(measurement_name))
         # here we write the paramters to the model
 
-        self._root.destroy()
+        self._ui_parent.destroy()
         if self.callback is not None:
             self.callback()
 
@@ -160,7 +160,7 @@ class SettingsWindow(ScrollableFrame):
 
                 instrument_list = dict()
                 instrument_list.update(
-                    {inst_type: InstrumentRole(self._root, [inst_reference.instrument_config_descriptor])}
+                    {inst_type: InstrumentRole(self._ui_parent, [inst_reference.instrument_config_descriptor])}
                 )
 
                 self.logger.debug('Set chosen instruments to %s', instrument_list)
@@ -182,7 +182,7 @@ class SettingsWindow(ScrollableFrame):
                     inst_parameter = {}
 
                 for k, v in inst_parameter.items():
-                    data_dict[k] = ConfigParameter(self._root, value=v)
+                    data_dict[k] = ConfigParameter(self._ui_parent, value=v)
 
                 t.grid(row=counter, column=0, sticky='w')
                 t.title = 'Instrument Settings'

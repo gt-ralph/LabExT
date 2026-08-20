@@ -109,7 +109,7 @@ class MovementTable(CustomFrame):
     def __init__(self, parent, customwidth=20, store_callback=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self._parameter_source = None
-        self._root = parent  # keep reference to the ui parent
+        self._ui_parent = parent  # keep reference to the ui parent
         self._customwidth = customwidth
         self.set_from_meas_param = False
         self.new_source = []

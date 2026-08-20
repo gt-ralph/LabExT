@@ -47,7 +47,7 @@ class PlotGridControl(Frame):
         self.settings = settings
         self._rows = 0
         self._cols = 0
-        self._root = parent
+        self._ui_parent = parent
         self._add_legend = add_legend
         if settings is None:
             self.set_dimensions(rows, cols)
@@ -281,7 +281,7 @@ class PlotGridCell(Frame):
             and the plots update live, as long as the data is provided in an ObservableList.
         """
         super(PlotGridCell, self).__init__(parent)  # call the parent controls constructor
-        self._root = parent
+        self._ui_parent = parent
         self._polling = (polling_time is not None)  # Whether the plot should update live or poll for changes
         self._add_legend = add_legend
         self._polling_time = polling_time  # How long the plot waits between polling.s$

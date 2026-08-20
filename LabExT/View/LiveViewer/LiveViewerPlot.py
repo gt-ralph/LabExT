@@ -37,7 +37,7 @@ else:
 class LiveViewerPlot(Frame):
     def __init__(self, parent: Tk, model: LiveViewerModel):
         super().__init__(parent, highlightbackground="grey", highlightthickness=1)
-        self._root: Tk = parent
+        self._ui_parent: Tk = parent
 
         self.model: LiveViewerModel = model
 

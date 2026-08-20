@@ -248,7 +248,7 @@ class CardManager(Frame):
         model :
             The Live viewer model
         """
-        self._root: Tk = parent
+        self._ui_parent: Tk = parent
         self.model: LiveViewerModel = model
         self.parent: Tk = parent
         self.controller: LiveViewerController = controller

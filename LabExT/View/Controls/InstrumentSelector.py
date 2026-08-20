@@ -27,7 +27,7 @@ class InstrumentRole(object):
         :param choice: (optional) integer defining the selected instrument
         :param channel: (optional) integer defining the selected channel
         """
-        self._root = parent  # keep reference to the ui root
+        self._ui_parent = parent  # keep reference to the ui root
         self._choices = deepcopy(choices)
         self.selected_instr = StringVar(parent,
                                         self.choices_human_readable_desc[0] if choice is None else
@@ -150,7 +150,7 @@ class InstrumentSelector(CustomFrame):
         # but type filtered so only interesting devices are shown
         self._instrument_source = {}
 
-        self._root = parent  # save reference to ui root
+        self._ui_parent = parent  # save reference to ui root
         self._can_execute = NORMAL
         self.__setup__()  # draw the control
 
