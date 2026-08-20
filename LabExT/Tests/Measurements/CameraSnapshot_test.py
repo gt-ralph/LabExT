@@ -8,6 +8,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -26,9 +27,15 @@ class StubCamera:
     #: one below the Mono12 full scale of 4095, as the real Alvium clips
     clip_level = 4094.0
 
-    def __init__(self, rate=0.05, pedestal=8.0):
+    #: where the beam sits in the frame, as (y, x)
+    spot_position = (24, 32)
+
+    def __init__(self, rate=0.05, pedestal=8.0, spot_sigma=None):
         self.rate = rate
         self.pedestal = pedestal
+        # None puts all the light in one pixel, which keeps the sums whole numbers and the
+        # assertions exact. A width is for the ROI fit, which needs a shape to fit to.
+        self.spot_sigma = spot_sigma
         self._exposure = 10000.0
         self.gain = 0.0
         self.pixel_format = 'Mono12'
@@ -63,10 +70,16 @@ class StubCamera:
 
     def _frame(self):
         self.exposures_used.append(self._exposure)
-        peak = self.pedestal + (self.rate * self._exposure if self.light else 0.0)
-        image = np.full((48, 64), self.pedestal, dtype=np.uint16)
-        image[24, 32] = min(peak, self.clip_level)
-        return image
+        amplitude = self.rate * self._exposure if self.light else 0.0
+        image = np.full((48, 64), self.pedestal, dtype=np.float64)
+        spot_y, spot_x = self.spot_position
+        if self.spot_sigma:
+            ys, xs = np.ogrid[:48, :64]
+            image += amplitude * np.exp(
+                -((ys - spot_y) ** 2 + (xs - spot_x) ** 2) / (2.0 * self.spot_sigma ** 2))
+        else:
+            image[spot_y, spot_x] += amplitude
+        return np.minimum(image, self.clip_level).astype(np.uint16)
 
     def snap_photo(self, timeout_ms=None):
         return self._frame()
@@ -130,8 +143,13 @@ class CameraSnapshotTest(unittest.TestCase):
     # helpers
     #
 
-    def run_algorithm(self, camera=None, **overrides):
-        """Run the measurement once against the stubs and return `(data, parameters, camera)`."""
+    def run_algorithm(self, camera=None, stored_integration_roi=None, **overrides):
+        """Run the measurement once against the stubs and return `(data, parameters, camera)`.
+
+        The Camera View's stored integration ROI is patched out unless a test asks for one: it is a
+        real file in the LabExT settings directory, so whether these tests summed a region or the
+        whole frame would otherwise depend on what was last dialled in on the bench.
+        """
         camera = camera if camera is not None else StubCamera()
         laser = StubLaser(camera)
         measurement = CameraSnapshot()
@@ -159,9 +177,11 @@ class CameraSnapshotTest(unittest.TestCase):
         data = Measurement.setup_return_dict()
         with tempfile.TemporaryDirectory(prefix='camera_snapshot_test_') as directory:
             parameters.get('image output directory').value = directory
-            measurement.algorithm(None, data=data,
-                                  instruments={'Camera': camera, 'Laser': laser},
-                                  parameters=parameters)
+            with patch('LabExT.Measurements.CameraSnapshot.PowerMeterCameraAlvium'
+                       '.load_integration_roi', return_value=stored_integration_roi):
+                measurement.algorithm(None, data=data,
+                                      instruments={'Camera': camera, 'Laser': laser},
+                                      parameters=parameters)
         measurement._check_data(data=data)
         return data, parameters, camera
 
@@ -306,6 +326,112 @@ class CameraSnapshotTest(unittest.TestCase):
 
         # not on the last and shortest bracket, which the live view would then be stuck with
         self.assertEqual(parameters.get('exposure time').value, camera.exposure_time)
+
+    #
+    # integration ROI
+    #
+
+    #: a region of the stub frame which contains the spot at (y=24, x=32)
+    spot_roi = {'integration ROI x': 28, 'integration ROI y': 20,
+                'integration ROI width': 10, 'integration ROI height': 10}
+
+    def test_roi_sum_covers_only_the_region_asked_for(self):
+        data, _, camera = self.run_algorithm(**self.spot_roi)
+
+        pixels = self.spot_roi['integration ROI width'] * self.spot_roi['integration ROI height']
+        peak = data['values']['max counts'][0]
+        # pedestal everywhere in the region, plus the one lit pixel
+        self.assertEqual([pixels * camera.pedestal + (peak - camera.pedestal)],
+                         data['values']['roi sum counts'])
+        self.assertEqual([28, 20, 10, 10], data['measurement settings']['integration roi'])
+        self.assertEqual(pixels, data['measurement settings']['integration roi pixels'])
+
+    def test_roi_rate_is_flat_across_brackets_where_the_frame_rate_is_not(self):
+        """The reason the ROI series exists: on this setup the whole-frame rate moved by 3x."""
+        data, _, _ = self.run_algorithm(**dict(
+            self.spot_roi, **{'exposure brackets': 3, 'capture dark frame': True}))
+
+        # all the light is inside the region and the stub is exactly linear, so the region's rate
+        # is the same at every exposure
+        roi_rates = data['values']['roi counts per second']
+        np.testing.assert_allclose(roi_rates, roi_rates[0], rtol=1e-9)
+
+        # the whole frame carries the pedestal of every pixel outside the region too. That part is
+        # removed by the dark as well, so this stub cannot reproduce the drift seen on the bench -
+        # what it does show is that the two series are computed over different areas.
+        self.assertNotEqual(data['values']['roi sum counts'],
+                            data['values']['dark corrected roi sum counts'])
+        self.assertLess(data['values']['dark corrected roi sum counts'][0],
+                        data['values']['roi sum counts'][0])
+
+    def test_roi_is_taken_from_the_camera_view_when_unset(self):
+        data, parameters, _ = self.run_algorithm(stored_integration_roi=[4, 6, 20, 12])
+
+        self.assertEqual([4, 6, 20, 12], data['measurement settings']['integration roi'])
+        # written back into the settings, so the result file says what was summed
+        self.assertEqual(4, parameters.get('integration ROI x').value)
+        self.assertEqual(20, parameters.get('integration ROI width').value)
+        self.assertIn('Camera View', data['measurement settings']['integration roi note'])
+
+    def test_roi_defaults_to_the_whole_frame(self):
+        data, _, _ = self.run_algorithm()
+
+        self.assertEqual([0, 0, 64, 48], data['measurement settings']['integration roi'])
+        self.assertEqual(64 * 48, data['measurement settings']['integration roi pixels'])
+        # with the whole frame summed, the region sum and the frame mean say the same thing
+        self.assertAlmostEqual(data['values']['mean counts'][0] * 64 * 48,
+                               data['values']['roi sum counts'][0], places=6)
+
+    def test_roi_outside_the_frame_is_refused_before_capturing(self):
+        camera = StubCamera()
+        with self.assertRaises(ValueError):
+            self.run_algorithm(camera=camera, **{'integration ROI x': 60,
+                                                 'integration ROI width': 20,
+                                                 'integration ROI height': 10})
+        # refused up front rather than after writing images nobody can use
+        self.assertEqual([], camera.saved_files)
+
+    def test_roi_fitted_to_the_spot_brackets_it(self):
+        data, parameters, _ = self.run_algorithm(
+            camera=StubCamera(spot_sigma=3.0), **{'fit integration ROI to spot': True,
+                                                  'exposure brackets': 2})
+
+        x, y, width, height = data['measurement settings']['integration roi']
+        spot_y, spot_x = StubCamera.spot_position
+        self.assertTrue(0 < width <= 64 and 0 < height <= 48, (width, height))
+        self.assertLess(x, spot_x)
+        self.assertGreater(x + width, spot_x)
+        self.assertLess(y, spot_y)
+        self.assertGreater(y + height, spot_y)
+        # one region for the whole run, and the settings record it
+        self.assertEqual(x, parameters.get('integration ROI x').value)
+        self.assertEqual([x, y, width, height],
+                         [data['measurement settings']['integration ROI x']['value'],
+                          data['measurement settings']['integration ROI y']['value'],
+                          data['measurement settings']['integration ROI width']['value'],
+                          data['measurement settings']['integration ROI height']['value']])
+
+    #
+    # output paths
+    #
+
+    def test_relative_image_directory_lands_next_to_the_results(self):
+        class ResultData(dict):
+            """An AutosaveDict carries the result file path; a plain dict does not."""
+            file_path = None
+
+        with tempfile.TemporaryDirectory(prefix='camera_snapshot_test_') as results_directory:
+            data = ResultData()
+            data.file_path = os.path.join(results_directory, 'a_run.json.part')
+
+            directory, stem = CameraSnapshot._resolve_output_target('bracket_test', data)
+            self.assertEqual(os.path.join(results_directory, 'bracket_test'), directory)
+            self.assertEqual('a_run', stem)
+
+            # an absolute path is still taken as given, and an empty one means beside the results
+            absolute = os.path.join(results_directory, 'elsewhere')
+            self.assertEqual(absolute, CameraSnapshot._resolve_output_target(absolute, data)[0])
+            self.assertEqual(results_directory, CameraSnapshot._resolve_output_target('', data)[0])
 
     def test_rejects_settings_which_cannot_be_captured(self):
         for overrides, why in [

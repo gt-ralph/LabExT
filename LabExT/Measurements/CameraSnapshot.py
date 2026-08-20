@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Dict
 
 import numpy as np
 
+from LabExT.Instruments.PowerMeterCameraAlvium import PowerMeterCameraAlvium
 from LabExT.Measurements.MeasAPI import *
 from LabExT.Utils import get_configuration_file_path
 
@@ -82,6 +83,17 @@ class CameraSnapshot(Measurement):
       on when using them.
     * **ROI width / ROI height / ROI offset x / ROI offset y**: Region of interest in pixels. Leave
       width and height at 0 to use the full sensor. A smaller ROI reads out faster.
+    * **integration ROI x / y / width / height**: The region the reported sums are taken over, in
+      pixels of the delivered frame. Not the same thing as the camera ROI above: that one crops
+      what the sensor reads out, this one only says which part of the frame is measured. Leave
+      width and height at 0 to sum the whole frame, or to pick up the region set on a live image in
+      the Camera View, which is where the peak search gets its own from. Whichever is used is
+      written back into the settings, so the result file records what was actually summed.
+    * **fit integration ROI to spot**: Fit the region to the beam instead of setting it by hand. It
+      is fitted once, on a frame taken before the first bracket, then held for the whole
+      measurement - a region that follows the spot from frame to frame measures the spot's shape
+      rather than its power, and one whose size changes between wavelengths puts its own area into
+      the response curve.
     * **laser enabled**: Whether the laser drives the chip while the frames are captured. Search
       for Peak switches the light off when it finishes, so a measurement that wants light has to
       turn it back on; untick this to capture the sensor in the dark.
@@ -120,7 +132,8 @@ class CameraSnapshot(Measurement):
       the frame rather than the frame itself - a raw Mono12 PNG would render almost black, since
       those counts occupy the bottom sixteenth of a 16 bit range.
     * **image output directory**: Where to write the images. Leave empty to write them next to the
-      measurement result file.
+      measurement result file. A relative path is taken relative to that same place, so
+      `bracket_test` makes a folder beside the results rather than one wherever LabExT was started.
     * **close camera after measurement**: Leave off unless something else needs the camera. Keeping
       the connection open avoids a full camera re-open every time LabExT collects instrument
       metadata, which it does twice per measurement.
@@ -132,7 +145,15 @@ class CameraSnapshot(Measurement):
     several brackets captures every point at several exposures, and analysis keeps, per point, the
     longest bracket that is not clipped: `saturated pixel fraction` says which those are,
     `exposure time us` turns its counts back into a rate, and the dark frame at the same exposure
-    removes the pedestal first. `mean counts per second` is that rate, computed here.
+    removes the pedestal first. `roi counts per second` is that rate, computed here.
+
+    Use the ROI series rather than the whole-frame ones. Measured on this setup with three brackets
+    a factor of four apart: summed over a region around the spot, the rate agrees to 3% across a
+    factor of 16 in exposure, while the whole-frame rate climbs from 2615 to 7700 counts/s over the
+    same ladder. The difference is a background of one to two counts per pixel which is present
+    wherever the beam is not and does not scale with the exposure, so dividing it by a shorter
+    exposure inflates it. Over a megapixel that swamps a spot; inside a region around the spot it
+    is a few percent.
 
     With auto exposure off the ladder is the same at every wavelength, so the ratio between two
     wavelengths never depends on a setting that moved between them - which is what makes the result
@@ -182,6 +203,19 @@ class CameraSnapshot(Measurement):
             'ROI height': MeasParamInt(value=0, unit='px'),
             'ROI offset x': MeasParamInt(value=0, unit='px'),
             'ROI offset y': MeasParamInt(value=0, unit='px'),
+            # The region the reported sums are taken over, in pixels of the delivered frame, and a
+            # different thing from the camera ROI above, which crops what the sensor reads out.
+            # Leave at zero to sum the whole frame, or to pick up the region dialled in on a live
+            # image in the Camera View, which is where the peak search takes its own from.
+            'integration ROI x': MeasParamInt(value=0, unit='px'),
+            'integration ROI y': MeasParamInt(value=0, unit='px'),
+            'integration ROI width': MeasParamInt(value=0, unit='px'),
+            'integration ROI height': MeasParamInt(value=0, unit='px'),
+            # Fitted once, on a frame taken before the first bracket, and then held for every frame
+            # in the measurement. Held rather than re-fitted per frame because a region that
+            # follows the spot measures the spot's shape instead of its power, and one that changes
+            # size between wavelengths puts its own area into the response curve.
+            'fit integration ROI to spot': MeasParamBool(value=False),
             # The laser has to be driven from here. Search for Peak enables it only inside a
             # `with self.instr_laser:` block and switches it off again on the way out, so by the
             # time a measurement runs the light is off unless the measurement turns it back on.
@@ -265,6 +299,11 @@ class CameraSnapshot(Measurement):
         return {
             # Settings which say how a point is captured rather than what it is captured at, so
             # there is nothing to plot against them - sweeping them would just relabel the axis.
+            'integration ROI x': def_params['integration ROI x'],
+            'integration ROI y': def_params['integration ROI y'],
+            'integration ROI width': def_params['integration ROI width'],
+            'integration ROI height': def_params['integration ROI height'],
+            'fit integration ROI to spot': def_params['fit integration ROI to spot'],
             'laser settle time': def_params['laser settle time'],
             'auto exposure': def_params['auto exposure'],
             'auto exposure target fill': def_params['auto exposure target fill'],
@@ -306,9 +345,72 @@ class CameraSnapshot(Measurement):
             stem = 'CameraSnapshot'
             default_directory = os.getcwd()
 
-        directory = os.path.abspath(output_directory) if output_directory else default_directory
+        if not output_directory:
+            directory = default_directory
+        else:
+            # A relative path is taken as relative to where the result file goes, not to where
+            # LabExT happens to have been started: 'bracket_test' next to the results is what
+            # someone typing it means, and the process working directory is invisible from the GUI.
+            directory = os.path.abspath(os.path.join(default_directory, output_directory))
         os.makedirs(directory, exist_ok=True)
         return directory, stem
+
+    @staticmethod
+    def _resolve_integration_roi(x, y, width, height, frame_width, frame_height):
+        """The integration region in pixels of the delivered frame.
+
+        A zero width or height means the whole frame, which is what a measurement that was never
+        given a region gets. A region that hangs off the edge raises rather than being silently
+        shrunk: numpy slicing would return a smaller patch and quietly rescale every sum in the run.
+
+        Returns:
+            tuple: `(x, y, width, height)`
+        """
+        x, y = int(x), int(y)
+        width = int(width) or int(frame_width)
+        height = int(height) or int(frame_height)
+        if (x < 0 or y < 0 or width <= 0 or height <= 0
+                or x + width > frame_width or y + height > frame_height):
+            raise ValueError(
+                "Integration ROI x={:d} y={:d} width={:d} height={:d} does not fit inside the "
+                "{:d}x{:d} frame the camera delivers. The region is in pixels of the delivered "
+                "frame, so if the camera ROI is cropped these are relative to that crop, not to "
+                "the full sensor.".format(x, y, width, height, frame_width, frame_height))
+        return x, y, width, height
+
+    @staticmethod
+    def _record_integration_roi(parameters, roi, data=None):
+        """Write the region actually summed back into the settings, so the results describe it.
+
+        `data` is given when the settings have already been written into the result file and the
+        entries have to be corrected as well, which is the case for a region fitted at capture time.
+        """
+        names = ('integration ROI x', 'integration ROI y',
+                 'integration ROI width', 'integration ROI height')
+        for name, value in zip(names, roi):
+            parameters.get(name).value = int(value)
+            if data is not None:
+                data['measurement settings'][name] = parameters.get(name).as_dict()
+
+    def _fit_integration_roi(self, frame_timeout, frame_width, frame_height):
+        """Fit the integration region to the beam on a frame taken for the purpose.
+
+        Uses the camera-backed power meter's fit, so the region a measurement sums is chosen the
+        same way as the region a peak search sums, rather than by a lookalike that can drift.
+
+        Returns:
+            tuple: `((x, y, width, height), note)`, the region falling back to the whole frame when
+            there is no compact spot to fit.
+        """
+        image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(image)
+        if roi is None:
+            self.logger.warning(
+                "Could not fit the integration ROI to a spot (%s); summing the whole frame. The "
+                "whole-frame sum carries a background that does not scale with the exposure, so a "
+                "rate taken from it is not comparable between brackets.", note)
+            return (0, 0, int(frame_width), int(frame_height)), note
+        return self._resolve_integration_roi(*roi, frame_width, frame_height), note
 
     def _save_frame(self, path_stem, image, save_tiff, save_png, save_npy):
         """Write one frame in every selected format and return the file names written.
@@ -470,6 +572,11 @@ class CameraSnapshot(Measurement):
         auto_exposure_target_fill = parameters.get('auto exposure target fill').value
         auto_exposure_max = parameters.get('auto exposure max').value
         capture_dark_frame = parameters.get('capture dark frame').value
+        fit_integration_roi = parameters.get('fit integration ROI to spot').value
+        integration_roi = (parameters.get('integration ROI x').value,
+                           parameters.get('integration ROI y').value,
+                           parameters.get('integration ROI width').value,
+                           parameters.get('integration ROI height').value)
 
         if n_frames < 1:
             raise ValueError("number of frames must be at least 1, got {:d}.".format(n_frames))
@@ -573,6 +680,26 @@ class CameraSnapshot(Measurement):
         parameters.get('ROI offset x').value = int(actual_roi[2])
         parameters.get('ROI offset y').value = int(actual_roi[3])
 
+        frame_width, frame_height = int(actual_roi[0]), int(actual_roi[1])
+        integration_roi_note = None
+        if not fit_integration_roi and not any(integration_roi):
+            # Nothing set here, so take the region dialled in on a live image in the Camera View if
+            # there is one. That is where the peak search takes its own from, and having a
+            # measurement sum a different part of the frame than the search aimed at is a trap.
+            stored_roi = PowerMeterCameraAlvium.load_integration_roi()
+            if stored_roi is not None:
+                integration_roi = tuple(stored_roi)
+                integration_roi_note = "taken from the Camera View's stored integration ROI"
+                self.logger.info(
+                    "Summing the integration ROI %s set in the Camera View; set 'integration ROI "
+                    "width' and 'height' here to override it.", list(integration_roi))
+        if not fit_integration_roi:
+            # validated before anything is captured: a region that does not fit the frame is a
+            # settings mistake, and finding out after the images are written wastes the run
+            integration_roi = self._resolve_integration_roi(
+                *integration_roi, frame_width, frame_height)
+            self._record_integration_roi(parameters, integration_roi)
+
         # write the measurement parameters into the measurement settings
         for pname, pparam in parameters.items():
             data['measurement settings'][pname] = pparam.as_dict()
@@ -592,6 +719,7 @@ class CameraSnapshot(Measurement):
         max_counts = []
         std_counts = []
         saturated_fractions = []
+        roi_sums = []
 
         # The laser is on for the whole capture: `with` enables it on the way in and switches it
         # off again on the way out, including if a capture raises, so a failed run cannot leave
@@ -614,6 +742,17 @@ class CameraSnapshot(Measurement):
                 parameters.get('exposure time').value = float(self.instr_camera.exposure_time)
                 data['measurement settings']['exposure time'] = \
                     parameters.get('exposure time').as_dict()
+
+            if fit_integration_roi:
+                # After auto exposure, so the frame it fits on is exposed the way the data frames
+                # will be, and before the brackets, so every frame in the run shares one region.
+                integration_roi, integration_roi_note = self._fit_integration_roi(
+                    frame_timeout, frame_width, frame_height)
+                self._record_integration_roi(parameters, integration_roi, data)
+                self.logger.info("Fitted integration ROI %s: %s.",
+                                 list(integration_roi), integration_roi_note)
+
+            roi_x, roi_y, roi_width, roi_height = integration_roi
 
             bracket_exposures = self._bracket_exposures(n_brackets, bracket_factor)
 
@@ -664,6 +803,12 @@ class CameraSnapshot(Measurement):
                     min_counts.append(float(np.min(image)))
                     max_counts.append(float(np.max(image)))
                     std_counts.append(float(np.std(image)))
+                    # Summed with the power meter's own helper, so a number here and a number the
+                    # peak search acts on are the same computation. Raw: the dark frames are not
+                    # taken until the light is off, and subtracting a sum from a sum afterwards is
+                    # exact, so nothing has to be held in memory for it.
+                    roi_sums.append(PowerMeterCameraAlvium.integrate_patch(
+                        image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]))
                     saturated = int(np.count_nonzero(image >= clip_level))
                     saturated_fractions.append(float(saturated / image.size))
                     if saturated and len(bracket_exposures) == 1:
@@ -724,6 +869,8 @@ class CameraSnapshot(Measurement):
                         'exposure time us': float(self.instr_camera.exposure_time),
                         'files': dark_files,
                         'timestamp utc': datetime.now(timezone.utc).isoformat(),
+                        'roi sum': PowerMeterCameraAlvium.integrate_patch(
+                            dark_image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]),
                         'mean counts': float(np.mean(dark_image)),
                         'min counts': float(np.min(dark_image)),
                         'max counts': float(np.max(dark_image)),
@@ -747,6 +894,7 @@ class CameraSnapshot(Measurement):
         data['values']['max counts'] = max_counts
         data['values']['std counts'] = std_counts
         data['values']['saturated pixel fraction'] = saturated_fractions
+        data['values']['roi sum counts'] = roi_sums
 
         if dark_frames:
             # The mean is linear, so subtracting the dark's mean from a frame's mean is exact - no
@@ -760,12 +908,25 @@ class CameraSnapshot(Measurement):
                                for mean, bracket in zip(mean_counts, bracket_indices)]
             data['values']['dark mean counts'] = [dark_means[b] for b in bracket_indices]
             data['values']['dark corrected mean counts'] = corrected_means
+
+            dark_roi_sums = {dark['bracket index']: dark['roi sum'] for dark in dark_frames}
+            corrected_roi_sums = [roi_sum - dark_roi_sums[bracket]
+                                  for roi_sum, bracket in zip(roi_sums, bracket_indices)]
+            data['values']['dark corrected roi sum counts'] = corrected_roi_sums
         else:
             corrected_means = mean_counts
+            corrected_roi_sums = roi_sums
 
         # A count on its own only means something next to the exposure it was integrated over, so
-        # this is the series to compare between points captured at different exposures - which is
+        # these are the series to compare between points captured at different exposures - which is
         # every point, once bracketing or auto exposure is on.
+        #
+        # The ROI rate is the one to use. Measured on this setup, it holds to 3% across a factor of
+        # 16 in exposure where the whole-frame rate moves by 3x, because the frame outside the beam
+        # carries a background which does not scale with the exposure and so does not divide out.
+        data['values']['roi counts per second'] = [
+            1e6 * counts / exposure
+            for counts, exposure in zip(corrected_roi_sums, frame_exposures)]
         data['values']['mean counts per second'] = [
             1e6 * counts / exposure for counts, exposure in zip(corrected_means, frame_exposures)]
 
@@ -774,6 +935,12 @@ class CameraSnapshot(Measurement):
         data['measurement settings']['frame timestamps utc'] = timestamps
         # fewer than requested if the ladder ran into the camera's shortest exposure
         data['measurement settings']['exposure brackets captured'] = int(len(bracket_exposures))
+        # the region every sum above was taken over, and how many pixels it holds, so a sum can be
+        # turned back into counts per pixel without re-deriving it from the four settings
+        data['measurement settings']['integration roi'] = [int(v) for v in integration_roi]
+        data['measurement settings']['integration roi pixels'] = int(roi_width * roi_height)
+        if integration_roi_note:
+            data['measurement settings']['integration roi note'] = integration_roi_note
         # says whether 'mean counts per second' had a dark frame subtracted from it or not, which
         # is otherwise only visible by noticing that 'dark frames' is missing
         data['measurement settings']['counts per second dark corrected'] = bool(dark_frames)
