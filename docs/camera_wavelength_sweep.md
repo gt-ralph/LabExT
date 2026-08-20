@@ -46,8 +46,8 @@ measurement. Search for Peak then runs once per device, which is what you want.
 | parameter | value | why |
 |---|---|---|
 | pixel format | `Mono12` | 4095 counts of range; `Mono8` throws away four bits |
-| laser wavelength | first wavelength of the sweep | also the wavelength auto exposure sets the exposure at, so make it the bright end if you use it |
-| **wavelength stop** | last wavelength | 0 means no sweep; either direction works |
+| laser wavelength | first wavelength of the sweep, at the **dim** end of the band | this is where auto exposure sets the anchor, and the ladder only goes shorter from there - see below |
+| **wavelength stop** | last wavelength | 0 means no sweep; either direction works, so start at the dim end and sweep up or down as needed |
 | **wavelength step** | e.g. 5 nm | positive whichever way the sweep runs; every wavelength costs a settle plus every bracket and frame |
 | **wavelength settle time** | 0.2 s | a frame taken while the laser is still tuning was taken at a wavelength nobody recorded |
 | exposure time | peak at 60-70% at the brightest wavelength | this is the **longest** bracket; the ladder descends from it |
@@ -64,6 +64,26 @@ measurement. Search for Peak then runs once per device, which is what you want.
 | save TIFF / PNG / NPY | **all off** for the bulk run | see the data budget below |
 | image output directory | e.g. `images` | a relative name lands next to the result file |
 | close camera after measurement | off | keeps LabExT from re-opening the camera for every metadata read |
+
+### Anchor the ladder at the dim end of the band
+
+The brackets descend from the exposure at the first wavelength, so that exposure decides how far
+down the spectrum the measurement can still see - the short brackets are there to catch the bright
+end, not the dim one.
+
+Measured on this setup, 1510 to 1600 nm in 10 nm steps, three brackets, anchored at the bright end
+(3208 us, 67% fill at 1510): the brackets agreed to 1-7% down to -10 dB, then to 18% at -17 dB,
+and by -23.6 dB the two short brackets were reporting 63 counts, which is the sensor's noise peak
+rather than any signal. About 10 dB of solid spectrum out of the 30 dB the device actually spans.
+
+Anchored at the dim end instead, the same device needs about 58 ms at 1600 nm for 70% fill, which
+with four brackets gives 58 / 14.5 / 3.6 / 0.91 ms. The dim end is then measured near 70% fill, and
+the bright end - which would be 58,000 counts at the anchor - is caught unclipped by the third
+bracket. That covers the whole span, for about 0.3 s per wavelength.
+
+So: start the sweep at the dim end, and add brackets until the ladder reaches the bright end. A
+clipped long bracket at the bright end is expected and costs nothing; a dim end with no exposure
+long enough to see it cannot be recovered afterwards.
 
 In the wizard, select the devices and add `CameraSnapshot`; leave its parameter sweep empty. The
 capture-shape settings - brackets, bracket factor, dark frame, auto exposure, settle times, sweep
