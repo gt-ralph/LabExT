@@ -455,7 +455,36 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         _, off = self._load_beam_frames()
         roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(off)
         self.assertIsNone(roi, "a frame with the laser off must not yield an ROI")
-        self.assertIn("no compact spot", note)
+        # either reason is a refusal a user can act on: nothing compact anywhere, or the only
+        # compact thing being a single pixel, which is what a hot pixel looks like to this fit
+        self.assertTrue(any(reason in note for reason in ("no compact spot", "no beam")), note)
+
+    def test_a_hot_pixel_is_not_mistaken_for_a_beam(self):
+        """A defect is brighter per pixel than a weak beam, and pointing the ROI at it is worse
+        than admitting there is no beam: every reading for the rest of the run would measure it."""
+        frame = np.full((256, 320), 10, dtype=np.uint16)
+        frame[100, 200] = 4000  # one pixel, as hot pixels come
+
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(frame)
+        self.assertIsNone(roi, note)
+        self.assertIn("hot pixel", note)
+
+    def test_a_broad_beam_beats_a_brighter_compact_reflection(self):
+        """Measured on this setup at 1600 nm: the beam held 2.2e6 counts peaking at 302 counts/px,
+        a reflection held 1.2e4 peaking at 738. Ranking by peak brightness picks the reflection."""
+        frame = np.zeros((256, 320), dtype=np.uint16)
+        ys, xs = np.ogrid[:256, :320]
+        # 16x the light of the reflection, 2.4x dimmer per pixel - the same ordering as the real
+        # frames, scaled to a spot this frame can hold inside the compactness limit
+        frame += (300 * np.exp(-((ys - 128) ** 2 + (xs - 80) ** 2) / (2 * 12.0 ** 2))).astype(
+            np.uint16)
+        frame[126:130, 240:244] = 740       # compact reflection, brighter per pixel
+
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(frame)
+        self.assertIsNotNone(roi, note)
+        centre_x, centre_y = roi[0] + roi[2] // 2, roi[1] + roi[3] // 2
+        self.assertLess(abs(centre_x - 80), 25, "fitted the reflection, not the beam: " + note)
+        self.assertLess(abs(centre_y - 128), 25, note)
 
     def test_pure_noise_is_refused(self):
         rng = np.random.default_rng(0)

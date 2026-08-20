@@ -13,6 +13,7 @@ import threading
 from datetime import datetime, timezone
 
 import numpy as np
+from scipy.ndimage import uniform_filter
 
 from LabExT.Instruments.CameraAlliedVisionAlvium import CameraAlliedVisionAlvium
 from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
@@ -29,6 +30,17 @@ DEFAULT_SATURATION_FRACTION_LIMIT = 1e-4
 
 #: how many trigger() calls between re-reads of the camera's exposure and gain
 DEFAULT_SETTINGS_CHECK_INTERVAL = 20
+
+#: Box size in pixels used to find the beam, by looking for the most light in a box this big
+#: rather than for the brightest pixel. Roughly a spot across, since the fitted regions on this
+#: setup come out 98 to 120 px wide: too small and a compact reflection competes with a broad beam,
+#: too large and two devices' spots merge into one. It must stay well under the distance between
+#: neighbouring devices' spots on the sensor, which is about 150 px here.
+SPOT_SEARCH_KERNEL = 41
+
+#: fewest pixels above half the local peak for something to be called a beam. One or two is a hot
+#: pixel or a cosmic ray, and pointing the integration region at one would measure it all run.
+MIN_SPOT_PIXELS = 9
 
 #: ROI half-width as a multiple of the fitted spot radius. Measured against a real frame from the
 #: setup: 0.75 gives 96.8% contrast between aligned and dark, 1.25 gives 95.3%, 2.0 gives 91.2%. A
@@ -332,17 +344,41 @@ class PowerMeterCameraAlvium(Instrument):
             above = image - float(np.median(image))
             baseline = "frame median"
 
-        peak = float(above.max())
+        height, width = image.shape
+
+        # Locate the beam by which box holds the most light, not by the brightest single pixel. A
+        # hot pixel or a small reflection is routinely brighter per pixel than a broad beam carrying
+        # hundreds of times more light: measured on this setup at 1600 nm, the beam held 2.2e6
+        # counts and peaked at 302 counts/px, while a reflection held 1.2e4 and peaked at 738. Peak
+        # brightness picks the reflection every time; integrated light does not.
+        smoothed = uniform_filter(above, size=SPOT_SEARCH_KERNEL, mode='nearest')
+        if float(smoothed.max()) <= 0.0:
+            return None, "the frame is flat, so there is no spot to fit to"
+        centre_y, centre_x = (int(v) for v in np.unravel_index(np.argmax(smoothed), smoothed.shape))
+
+        # Shape measured around that centre rather than across the whole frame, so that a second
+        # bright thing elsewhere cannot stretch the spread and make a real beam look shapeless.
+        limit = max(8, int(ROI_MAX_RADIUS_FRACTION * min(height, width)))
+        y0, y1 = max(centre_y - limit, 0), min(centre_y + limit + 1, height)
+        x0, x1 = max(centre_x - limit, 0), min(centre_x + limit + 1, width)
+        patch = above[y0:y1, x0:x1]
+
+        peak = float(patch.max())
         if peak <= 0.0:
             return None, "the frame is flat, so there is no spot to fit to"
 
-        centre_y, centre_x = (int(v) for v in np.argwhere(above == peak)[0])
-        rows, columns = np.nonzero(above >= 0.5 * peak)
+        rows, columns = np.nonzero(patch >= 0.5 * peak)
+        if len(rows) < MIN_SPOT_PIXELS:
+            # A beam covers many pixels. One or two bright ones are a hot pixel or a cosmic ray, and
+            # aiming an integration region at those would measure the defect for the whole run.
+            return None, (
+                "no beam: only {:d} pixel(s) near ({:d}, {:d}) are above half of the local peak, "
+                "which is a hot pixel rather than a spot".format(len(rows), centre_x, centre_y))
+
         radius = int(ROI_SPOT_RADIUS_FACTOR * np.percentile(
-            np.hypot(columns - centre_x, rows - centre_y), ROI_SPOT_RADIUS_PERCENTILE))
+            np.hypot(columns + x0 - centre_x, rows + y0 - centre_y), ROI_SPOT_RADIUS_PERCENTILE))
         radius = max(4, radius)
 
-        height, width = image.shape
         if radius > ROI_MAX_RADIUS_FRACTION * min(height, width):
             return None, (
                 "no compact spot: the bright pixels are spread over {:d} px, more than {:.0%} of the "
