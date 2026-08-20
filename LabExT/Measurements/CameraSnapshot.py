@@ -82,7 +82,8 @@ class CameraSnapshot(Measurement):
     * **gain**: Analog gain in dB, clamped and snapped in the same way.
     * **pixel format**: `Mono8` gives 8 bit data, `Mono10` and `Mono12` give 16 bit data. Deeper
       formats carry more dynamic range but need a container that can hold it, so keep TIFF or NPY
-      on when using them.
+      on when using them. `Mono12` by default, and there is rarely a reason to go below it: the
+      four bits `Mono8` gives up are the ones the dim end of a spectrum is measured with.
     * **ROI width / ROI height / ROI offset x / ROI offset y**: Region of interest in pixels. Leave
       width and height at 0 to use the full sensor. A smaller ROI reads out faster.
     * **integration ROI x / y / width / height**: The region the reported sums are taken over, in
@@ -230,7 +231,10 @@ class CameraSnapshot(Measurement):
         parameters = {
             'exposure time': MeasParamFloat(value=10000.0, unit='us'),
             'gain': MeasParamFloat(value=0.0, unit='dB'),
-            'pixel format': MeasParamList(options=['Mono8', 'Mono10', 'Mono12'], value='Mono8'),
+            # Mono12 by default: the deeper format costs nothing but a 16 bit container, and a
+            # sweep taken in Mono8 throws away four bits of the range the dim end needs - which
+            # is how a spectrum's bottom two decades ended up at the quantisation floor once.
+            'pixel format': MeasParamList(options=['Mono8', 'Mono10', 'Mono12'], value='Mono12'),
             'ROI width': MeasParamInt(value=0, unit='px'),
             'ROI height': MeasParamInt(value=0, unit='px'),
             'ROI offset x': MeasParamInt(value=0, unit='px'),
@@ -503,7 +507,8 @@ class CameraSnapshot(Measurement):
             if data is not None:
                 data['measurement settings'][name] = parameters.get(name).as_dict()
 
-    def _fit_integration_roi(self, frame_timeout, frame_width, frame_height, unlit_frame=None):
+    def _fit_integration_roi(self, frame_timeout, frame_width, frame_height, unlit_frame=None,
+                             fallback=True):
         """Fit the integration region to the beam on a frame taken for the purpose.
 
         Uses the camera-backed power meter's fit, so the region a measurement sums is chosen the
@@ -522,6 +527,10 @@ class CameraSnapshot(Measurement):
         """
         image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
         roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(image, dark_reference=unlit_frame)
+        if roi is None and not fallback:
+            # the caller already has a region and only wanted a better one, so a failure here is
+            # not worth a warning: it just keeps what it had
+            return None, note
         if roi is None:
             self.logger.warning(
                 "Could not fit the integration ROI to a spot (%s); summing the whole frame. The "
@@ -857,6 +866,25 @@ class CameraSnapshot(Measurement):
                 parameters.get('exposure time').value = float(self.instr_camera.exposure_time)
                 data['measurement settings']['exposure time'] = \
                     parameters.get('exposure time').as_dict()
+
+                if fit_integration_roi:
+                    # The first fit ran at whatever exposure the run inherited, which for a device
+                    # brighter than the last one is a clipped frame - and a clipped plateau looks
+                    # like a fat spot, so the region comes out too big and collects background for
+                    # the rest of the run. Now that the exposure suits this beam, fit it again. No
+                    # unlit frame this time: at an exposure that fills the beam to the target, the
+                    # hot pixels that one removes are small by comparison, and taking a fresh one
+                    # would mean switching the light off and on again mid-run.
+                    refit, refit_note = self._fit_integration_roi(
+                        frame_timeout, frame_width, frame_height, fallback=False)
+                    if refit is not None and list(refit) != list(integration_roi):
+                        self.logger.info(
+                            "Refitted the integration ROI at the exposure the frames are taken "
+                            "at: %s, was %s (%s).",
+                            list(refit), list(integration_roi), refit_note)
+                        integration_roi, integration_roi_note = refit, refit_note
+                        self._record_integration_roi(parameters, integration_roi, data)
+                    roi_x, roi_y, roi_width, roi_height = integration_roi
 
             # One ladder for the whole sweep, and one auto exposure above it: the same exposures at
             # every wavelength are what make two wavelengths comparable, since whatever systematic

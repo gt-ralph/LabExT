@@ -29,6 +29,12 @@ from LabExT.View.Controls.CustomFrame import CustomFrame
 from LabExT.View.Controls.InstrumentSelector import InstrumentRole, InstrumentSelector
 from LabExT.View.EditMeasurementWizard.EditMeasurementWizardModel import EditMeasurementWizardModel
 
+#: Format this window starts in, and so the one a measurement inherits through the handover file
+#: unless someone chooses otherwise. The deepest this camera offers: Mono8 costs four bits of range
+#: for nothing but a smaller container, and losing them by accident put the bottom two decades of a
+#: transmission spectrum at the quantisation floor once already.
+DEFAULT_PIXEL_FORMAT = 'Mono12'
+
 
 class CameraViewWindow(Toplevel):
     """Live camera preview with exposure, gain, pixel format and ROI controls.
@@ -228,8 +234,11 @@ class CameraViewWindow(Toplevel):
         frame.pack(side=TOP, fill=X, pady=2)
 
         Label(frame, text="pixel format").grid(row=0, column=0, sticky='w')
-        self._pixel_format_var = StringVar(self, value='Mono8')
-        self._pixel_format_menu = OptionMenu(frame, self._pixel_format_var, 'Mono8')
+        # Mono12 rather than Mono8: this window hands its format to CameraSnapshot, so whatever
+        # it defaults to is what a measurement inherits, and four bits of range are not worth
+        # losing by accident. The menu is rebuilt from the camera's own list on connect.
+        self._pixel_format_var = StringVar(self, value=DEFAULT_PIXEL_FORMAT)
+        self._pixel_format_menu = OptionMenu(frame, self._pixel_format_var, DEFAULT_PIXEL_FORMAT)
         self._pixel_format_menu.grid(row=0, column=1, columnspan=3, sticky='we')
 
         self._roi_vars = {}
@@ -1198,7 +1207,7 @@ class CameraViewWindow(Toplevel):
 
         try:
             self.instrument_selector.deserialize_from_dict(settings.get('instrument', {}))
-            self._pixel_format_var.set(settings.get('pixel format', 'Mono8'))
+            self._pixel_format_var.set(settings.get('pixel format', DEFAULT_PIXEL_FORMAT))
             for key, value in settings.get('roi', {}).items():
                 if key in self._roi_vars:
                     self._roi_vars[key].set(str(value))

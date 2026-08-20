@@ -552,3 +552,20 @@ class ConvergeExposureTest(unittest.TestCase):
         # the hot pixel is 8x more sensitive than the beam here, so filling it instead lands an
         # order of magnitude short on exposure
         self.assertGreater(aimed.exposure_time, 5.0 * blind.exposure_time)
+
+    def test_converges_from_a_badly_clipped_start(self):
+        """A clipped frame hides its own peak, so scaling by it only ever asks for a 30% cut.
+
+        Seen on the bench: a run inherited 27 ms from a measurement in a shallower pixel format,
+        which in Mono12 is about 60x over. Five frames of ratio steps got a quarter of the way and
+        the run captured with the longest bracket clipped and the fitted region twice the size it
+        should have been, because a clipped plateau looks like a fat spot.
+        """
+        camera = self.SnappingCamera(rate=0.05)
+        camera.exposure_time = 400000.0  # about 60x too long, railed from the first frame
+
+        outcome = converge_exposure(camera, full_scale=4095.0, target_fill=0.7)
+
+        self.assertEqual('converged', outcome['status'], outcome['note'])
+        self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
+        self.assertLessEqual(outcome['frames used'], 5)

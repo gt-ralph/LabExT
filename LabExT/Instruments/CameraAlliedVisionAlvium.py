@@ -52,6 +52,16 @@ AUTO_EXPOSURE_MAX_FRAMES = 5
 #: noise on a single peak pixel does not send it round another pass.
 AUTO_EXPOSURE_TOLERANCE = 0.1
 
+#: fill at or above which a frame is treated as clipped, so that its peak says nothing about how
+#: far over the exposure is. Just under 1.0, because a sensor's ceiling need not be the format's:
+#: this camera rails Mono12 at 4094 rather than 4095.
+CLIPPED_FILL = 0.999
+
+#: factor to divide the exposure by per pass while the frame is still clipped. A stride rather than
+#: a ratio: from a decade over, scaling by the target fill would take eight passes and this takes
+#: two, and overshooting downwards costs one cheap pass back up.
+CLIPPED_STRIDE = 8.0
+
 #: frames dropped after each change while streaming. Frames already in flight were exposed before
 #: the change, so measuring the next one would score the exposure that has just been replaced.
 AUTO_EXPOSURE_SETTLE_FRAMES = 2
@@ -130,10 +140,14 @@ def converge_exposure(camera, full_scale, target_fill=0.7, max_exposure=None, ti
             # A frame with nothing in it gives no ratio to scale by, so go straight to the longest
             # exposure allowed: either something appears, or the view really is dark.
             wanted = ceiling
-        else:
+        elif peak_fill >= CLIPPED_FILL:
             # A clipped frame does not show its own peak - every railed pixel reads full scale
-            # whatever the light behind it - so this is a lower bound on the change needed rather
-            # than the answer, which is why it iterates.
+            # whatever the light behind it - so the ratio below would say "come down to 70%" no
+            # matter how far over it really is, and five frames of that only buys a factor of four.
+            # Step down by a stride instead, which reaches a decade in two frames. Seen for real
+            # starting from an exposure left behind by a run in a shallower pixel format.
+            wanted = exposure / CLIPPED_STRIDE
+        else:
             wanted = exposure * target_fill / peak_fill
         camera.exposure_time = min(max(wanted, floor), ceiling)
 
