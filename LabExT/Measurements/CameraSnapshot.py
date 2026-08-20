@@ -8,6 +8,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 import json
 import logging
 import os
+import re
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from time import sleep
@@ -23,6 +24,35 @@ if TYPE_CHECKING:
     from LabExT.Measurements.MeasAPI.Measparam import MeasParam
 else:
     MeasParam = None
+
+#: leading digits of a pixel format name, e.g. 12 from 'Mono12'
+_PIXEL_FORMAT_BITS = re.compile(r'(\d+)')
+
+
+def _full_scale_counts(pixel_format, dtype):
+    """Full scale in counts for a frame, taken from the pixel format not the numpy dtype.
+
+    Mono10 and Mono12 arrive in a uint16 array but only fill 10 or 12 bits, so
+    `np.iinfo(dtype).max` says 65535 and a clipped frame is never reported as saturated. The
+    dtype is only the fallback, for a format whose name carries no bit count.
+    """
+    match = _PIXEL_FORMAT_BITS.search(str(pixel_format or ''))
+    if match:
+        bits = int(match.group(1))
+        if 0 < bits <= 32:
+            return float((1 << bits) - 1)
+    return float(np.iinfo(dtype).max)
+
+
+def _clip_level(full_scale):
+    """The count at which to call a pixel saturated.
+
+    One below nominal full scale, because a sensor's ceiling need not be the format's: the Alvium
+    used here clips Mono12 at 4094, so testing for 4095 finds nothing in a frame that is plainly
+    railed - 2156 pixels at 4094 against 2 at 4093. A pixel one count under a true full scale is
+    saturated for any practical purpose, so the tolerance cannot mislead in the other direction.
+    """
+    return full_scale - 1.0 if full_scale > 1.0 else full_scale
 
 
 class CameraSnapshot(Measurement):
@@ -324,7 +354,9 @@ class CameraSnapshot(Measurement):
                 else:
                     image = images[idx]
 
-                full_scale = float(np.iinfo(image.dtype).max)
+                full_scale = _full_scale_counts(
+                    parameters.get('pixel format').value, image.dtype)
+                clip_level = _clip_level(full_scale)
 
                 # every selected format gets the same frame, so a TIFF and its PNG are one shot
                 frame_files = []
@@ -351,8 +383,19 @@ class CameraSnapshot(Measurement):
                 min_counts.append(float(np.min(image)))
                 max_counts.append(float(np.max(image)))
                 std_counts.append(float(np.std(image)))
-                saturated_fractions.append(
-                    float(np.count_nonzero(image >= full_scale) / image.size))
+                saturated = int(np.count_nonzero(image >= clip_level))
+                saturated_fractions.append(float(saturated / image.size))
+                if saturated:
+                    # Worth a warning rather than only a number in the results: clipped counts are
+                    # no longer proportional to power, so a sweep comparing frames to each other
+                    # is silently wrong at the bright end unless the exposure is brought down.
+                    self.logger.warning(
+                        "Frame %d of %d is clipped: %d pixels (%.3f%%) at or above full scale "
+                        "(%.0f counts for %s). Reduce the exposure time (%.1f us) or gain "
+                        "(%.2f dB); counts are not proportional to power once clipped.",
+                        idx + 1, n_frames, saturated, 100.0 * saturated / image.size,
+                        clip_level, parameters.get('pixel format').value,
+                        float(self.instr_camera.exposure_time), float(self.instr_camera.gain))
 
         # data['values'] must hold numeric series only: LabExT plots every one of them, and
         # PlotControl runs np.isfinite over the y data, which raises on strings. The file names and
@@ -374,6 +417,10 @@ class CameraSnapshot(Measurement):
         data['measurement settings']['image directory'] = directory
         # recorded so a dark-looking frame can be told apart from a dark chip without guessing
         data['measurement settings']['laser on during capture'] = bool(laser_enabled)
+        # so analysis can normalise counts and judge headroom without re-deriving them from the
+        # pixel format, which is exactly the step that went wrong here
+        data['measurement settings']['full scale counts'] = float(full_scale)
+        data['measurement settings']['saturation count level'] = float(clip_level)
 
         self.instr_laser.close()
 
