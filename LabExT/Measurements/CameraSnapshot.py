@@ -148,12 +148,17 @@ class CameraSnapshot(Measurement):
     removes the pedestal first. `roi counts per second` is that rate, computed here.
 
     Use the ROI series rather than the whole-frame ones. Measured on this setup with three brackets
-    a factor of four apart: summed over a region around the spot, the rate agrees to 3% across a
-    factor of 16 in exposure, while the whole-frame rate climbs from 2615 to 7700 counts/s over the
-    same ladder. The difference is a background of one to two counts per pixel which is present
-    wherever the beam is not and does not scale with the exposure, so dividing it by a shorter
-    exposure inflates it. Over a megapixel that swamps a spot; inside a region around the spot it
-    is a few percent.
+    a factor of four apart: summed over a region around the spot the rate holds to about 6% across
+    a factor of 16 in exposure, while the whole-frame rate climbs from 2186 to 6301 counts/s, a
+    spread of 65%, over the same ladder. The difference is a background of one to two counts per
+    pixel which is present wherever the beam is not and does not scale with the exposure, so
+    dividing it by a shorter exposure inflates it. Over a megapixel that swamps a spot.
+
+    Inside a region it barely matters how big the region is: the same frames give a 5 to 6% spread
+    for every box between 30 and 138 px, and only get worse at 200. What does change with the box
+    is how much of the beam it holds - 15% at 40 px, 68% at 138 px on that spot - so a box which is
+    refitted between wavelengths should be checked for its size wandering, since that fraction goes
+    straight into the response curve. `integration roi` is recorded per point for exactly that.
 
     With auto exposure off the ladder is the same at every wavelength, so the ratio between two
     wavelengths never depends on a setting that moved between them - which is what makes the result

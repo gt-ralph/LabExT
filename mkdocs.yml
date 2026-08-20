@@ -10,6 +10,7 @@ nav:
   - "How to Measure":
     - first_simple_measurement.md
     - setup_automatic_movement.md
+    - camera_wavelength_sweep.md
   - "How to Extend Code":
     - code_API_overview.md
     - code_API_mover.md
