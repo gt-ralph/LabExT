@@ -503,18 +503,25 @@ class CameraSnapshot(Measurement):
             if data is not None:
                 data['measurement settings'][name] = parameters.get(name).as_dict()
 
-    def _fit_integration_roi(self, frame_timeout, frame_width, frame_height):
+    def _fit_integration_roi(self, frame_timeout, frame_width, frame_height, unlit_frame=None):
         """Fit the integration region to the beam on a frame taken for the purpose.
 
         Uses the camera-backed power meter's fit, so the region a measurement sums is chosen the
         same way as the region a peak search sums, rather than by a lookalike that can drift.
+
+        `unlit_frame` is a frame taken at the same exposure with the light off, and it is what makes
+        this survive a long exposure. The sensor's hot pixels grow with the exposure - one on this
+        camera runs at 41.6 counts per millisecond - so past a few tens of milliseconds they are
+        brighter than a weak spot, and a fit looking for one compact bright thing finds two and
+        gives up. Subtracting the unlit frame removes them exactly, because they are the same
+        pixels doing the same thing whether the light is on or not.
 
         Returns:
             tuple: `((x, y, width, height), note)`, the region falling back to the whole frame when
             there is no compact spot to fit.
         """
         image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
-        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(image)
+        roi, note = PowerMeterCameraAlvium.fit_roi_to_spot(image, dark_reference=unlit_frame)
         if roi is None:
             self.logger.warning(
                 "Could not fit the integration ROI to a spot (%s); summing the whole frame. The "
@@ -551,7 +558,7 @@ class CameraSnapshot(Measurement):
     #: sensor doing what it normally does.
     DARK_FRAME_MAX_FILL = 0.1
 
-    def _auto_expose(self, target_fill, max_exposure, frame_timeout):
+    def _auto_expose(self, target_fill, max_exposure, frame_timeout, region=None):
         """Scale the exposure until the brightest pixel sits at `target_fill` of full scale.
 
         Runs with the light on and settled, immediately before the frames are captured, so that the
@@ -571,7 +578,10 @@ class CameraSnapshot(Measurement):
             full_scale=_full_scale_counts(self.instr_camera.pixel_format, np.uint16),
             target_fill=target_fill,
             max_exposure=max_exposure,
-            timeout_ms=int(frame_timeout))
+            timeout_ms=int(frame_timeout),
+            # the beam's own peak, not the frame's: a hot pixel grows with the exposure and would
+            # otherwise be what gets filled to the target, leaving the beam far under-exposed
+            region=region)
 
         if outcome['status'] != 'converged':
             # Both failures leave the frames being captured at an exposure nobody chose, which is
@@ -811,31 +821,42 @@ class CameraSnapshot(Measurement):
         laser_on = self.instr_laser if laser_enabled else nullcontext()
         auto_exposure_result = None
 
+        # One frame with the light still off, at the exposure the run starts with, kept only to
+        # locate the beam. Its hot pixels are the same pixels the lit frame has, so subtracting it
+        # leaves the beam and nothing else - which is what a fit looking for one compact bright
+        # thing needs, and what a whole-frame maximum cannot give once a hot pixel outshines a weak
+        # spot. Skipped when the laser is off, since then there is no beam to find either way.
+        unlit_frame = None
+        if fit_integration_roi and laser_enabled:
+            unlit_frame = self.instr_camera.snap_photo(
+                timeout_ms=int(frame_timeout)).astype(np.float64)
+
         with laser_on:
-            # The light has to be there before the first frame is read out, and auto exposure
-            # measures it, so this settle comes before either of them.
+            # The light has to be there before the first frame is read out, and the fit and auto
+            # exposure both measure it, so this settle comes before any of them.
             if laser_enabled and laser_settle_time > 0.0:
                 sleep(laser_settle_time)
 
-            if auto_exposure:
-                auto_exposure_result = self._auto_expose(
-                    auto_exposure_target_fill, auto_exposure_max, frame_timeout)
-                # The frames are taken at whatever it settled on, so the recorded exposure follows
-                # it rather than the value the run started with. The bracket ladder starts here too.
-                parameters.get('exposure time').value = float(self.instr_camera.exposure_time)
-                data['measurement settings']['exposure time'] = \
-                    parameters.get('exposure time').as_dict()
-
             if fit_integration_roi:
-                # After auto exposure, so the frame it fits on is exposed the way the data frames
-                # will be, and before the brackets, so every frame in the run shares one region.
+                # Before auto exposure, not after: auto exposure needs to know which pixels are the
+                # beam so that it fills those rather than whatever is brightest in the frame.
                 integration_roi, integration_roi_note = self._fit_integration_roi(
-                    frame_timeout, frame_width, frame_height)
+                    frame_timeout, frame_width, frame_height, unlit_frame=unlit_frame)
                 self._record_integration_roi(parameters, integration_roi, data)
                 self.logger.info("Fitted integration ROI %s: %s.",
                                  list(integration_roi), integration_roi_note)
 
             roi_x, roi_y, roi_width, roi_height = integration_roi
+
+            if auto_exposure:
+                auto_exposure_result = self._auto_expose(
+                    auto_exposure_target_fill, auto_exposure_max, frame_timeout,
+                    region=integration_roi)
+                # The frames are taken at whatever it settled on, so the recorded exposure follows
+                # it rather than the value the run started with. The bracket ladder starts here too.
+                parameters.get('exposure time').value = float(self.instr_camera.exposure_time)
+                data['measurement settings']['exposure time'] = \
+                    parameters.get('exposure time').as_dict()
 
             # One ladder for the whole sweep, and one auto exposure above it: the same exposures at
             # every wavelength are what make two wavelengths comparable, since whatever systematic
@@ -956,14 +977,18 @@ class CameraSnapshot(Measurement):
                         os.path.join(directory, "{:s}_dark{:03d}".format(stem, bracket)),
                         dark_image, save_tiff, save_png, save_npy)
 
-                    dark_peak_fill = float(np.max(dark_image)) / full_scale
+                    # the peak inside the region that is summed, not the frame's: a hot pixel
+                    # elsewhere grows with the exposure and would report every long dark as "not
+                    # dark" while saying nothing about the pixels the reading is taken from
+                    dark_peak_fill = float(np.max(
+                        dark_image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width])) / full_scale
                     if dark_peak_fill > self.DARK_FRAME_MAX_FILL:
                         self.logger.warning(
-                            "Dark frame %d is not dark: its brightest pixel is at %.1f%% of full "
-                            "scale. Either light is still reaching the camera - which a longer "
-                            "'laser settle time' or a light-tight enclosure fixes - or the "
-                            "exposure and gain are high enough for dark current alone to fill the "
-                            "sensor.", bracket, 100.0 * dark_peak_fill)
+                            "Dark frame %d is not dark: inside the integration ROI its brightest "
+                            "pixel is at %.1f%% of full scale. Either light is still reaching the "
+                            "camera - which a longer 'laser settle time' or a light-tight enclosure "
+                            "fixes - or the exposure and gain are high enough for dark current "
+                            "alone to fill the sensor.", bracket, 100.0 * dark_peak_fill)
 
                     dark_frames.append({
                         'bracket index': int(bracket),

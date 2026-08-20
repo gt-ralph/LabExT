@@ -524,3 +524,31 @@ class ConvergeExposureTest(unittest.TestCase):
         self.assertEqual('converged', outcome['status'])
         self.assertGreater(outcome['frames used'], 1)
         self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
+
+    def test_a_hot_pixel_outside_the_region_is_ignored(self):
+        """The reason `region` exists: a hot pixel grows with the exposure and outshines a weak spot.
+
+        Without it the exposure gets scaled until the defect reads the target fill, which leaves
+        the beam far under-exposed - measured on this camera at 41.6 counts per millisecond, so it
+        wins outright past a few tens of milliseconds.
+        """
+        class HotPixelCamera(ConvergeExposureTest.SnappingCamera):
+            HOT_COUNTS_PER_MS = 41.6
+
+            def _frame_at(self, exposure):
+                frame = super()._frame_at(exposure)
+                frame[1, 7] = min(self.HOT_COUNTS_PER_MS * exposure / 1000.0, self.full_scale - 1.0)
+                return frame
+
+        beam = (2, 2, 4, 4)  # the spot at (4, 4) with room around it; the hot pixel is outside
+
+        blind = HotPixelCamera(rate=0.005)
+        converge_exposure(blind, full_scale=4095.0, target_fill=0.7)
+        aimed = HotPixelCamera(rate=0.005)
+        outcome = converge_exposure(aimed, full_scale=4095.0, target_fill=0.7, region=beam)
+
+        self.assertEqual('converged', outcome['status'])
+        self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
+        # the hot pixel is 8x more sensitive than the beam here, so filling it instead lands an
+        # order of magnitude short on exposure
+        self.assertGreater(aimed.exposure_time, 5.0 * blind.exposure_time)

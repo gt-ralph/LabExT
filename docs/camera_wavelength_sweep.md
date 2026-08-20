@@ -57,33 +57,37 @@ measurement. Search for Peak then runs once per device, which is what you want.
 | **capture dark frame** | **on** | one dark per bracket, taken once after the sweep - the dark depends on exposure and gain, not on wavelength |
 | **auto exposure** | on for multi-device, off for a single device | it runs once before the sweep, so it adapts to each device while leaving the ladder fixed within a spectrum |
 | laser settle time | 0.2 s | enough on this setup - the darks came out at the expected black level with no light-leak warning |
-| **fit integration ROI to spot** | **on** for multi-device | each device emits into a different part of the frame, so a hand-set box only serves one of them |
-| integration ROI x/y/width/height | set explicitly, fit **off**, for a single device | a box fixed for the whole sweep cannot put its own area into the response |
+| integration ROI x/y/width/height | **set explicitly**, or leave at 0 to inherit the Camera View's box | a box fixed for the sweep cannot put its own area into the response, and it excludes hot pixels and reflections - see the warning below |
+| **fit integration ROI to spot** | on only where the beam is the brightest thing in the frame | the fit ranks by peak brightness, so a compact reflection can beat a broad beam |
 | number of frames | 1 for the bulk run, 3 for a validation point | three frames per bracket is what tells you whether the coupling held |
 | frame timeout | 5000 ms | must exceed the longest bracket |
 | save TIFF / PNG / NPY | **all off** for the bulk run | see the data budget below |
 | image output directory | e.g. `images` | a relative name lands next to the result file |
 | close camera after measurement | off | keeps LabExT from re-opening the camera for every metadata read |
 
-### Anchor the ladder at the dim end of the band
+### Anchor the ladder at the longest exposure the dark current allows
 
 The brackets descend from the exposure at the first wavelength, so that exposure decides how far
-down the spectrum the measurement can still see - the short brackets are there to catch the bright
-end, not the dim one.
+down the spectrum the measurement can see; the short brackets catch the bright end. What stops the
+anchor from simply being made long enough for the dim end is the sensor's own dark current inside
+the integration region.
 
-Measured on this setup, 1510 to 1600 nm in 10 nm steps, three brackets, anchored at the bright end
-(3208 us, 67% fill at 1510): the brackets agreed to 1-7% down to -10 dB, then to 18% at -17 dB,
-and by -23.6 dB the two short brackets were reporting 63 counts, which is the sensor's noise peak
-rather than any signal. About 10 dB of solid spectrum out of the 30 dB the device actually spans.
+Measured on this setup, 1510 to 1600 nm in 10 nm steps, three brackets anchored at 3208 us (67%
+fill at 1510): the brackets agreed to 1-7% down to -10 dB, to 18% at -17 dB, and by -23.6 dB the
+short brackets were reporting the sensor's noise peak rather than signal. About 10 dB of solid
+spectrum out of the 22 dB this device spans.
 
-Anchored at the dim end instead, the same device needs about 58 ms at 1600 nm for 70% fill, which
-with four brackets gives 58 / 14.5 / 3.6 / 0.91 ms. The dim end is then measured near 70% fill, and
-the bright end - which would be 58,000 counts at the anchor - is caught unclipped by the third
-bracket. That covers the whole span, for about 0.3 s per wavelength.
+Anchoring longer helps until the dark takes over. At 68 ms the dark's peak inside the region is 379
+counts, 9.3% of full scale - and at 1600 nm the beam's own peak is 530, only 1.4x that. Filling the
+beam to 70% at 1600 nm would need 369 ms, by which point dark current alone is past half full
+scale. So the dim end of this band is not exposure-limited, it is dark-current-limited, and no
+ladder recovers it.
 
-So: start the sweep at the dim end, and add brackets until the ladder reaches the bright end. A
-clipped long bracket at the bright end is expected and costs nothing; a dim end with no exposure
-long enough to see it cannot be recovered afterwards.
+The rule that follows: anchor at the longest exposure whose dark peak inside the region stays
+around 10% of full scale - about 70 ms on this camera - and add brackets until the ladder reaches
+the bright end. Four brackets from 68 ms covers 1510 to 1600 with something unclipped everywhere.
+Accept that the last few wavelengths of a 22 dB spectrum are upper limits, not measurements, and
+read `saturated pixel fraction` and the bracket agreement to see where that starts.
 
 In the wizard, select the devices and add `CameraSnapshot`; leave its parameter sweep empty. The
 capture-shape settings - brackets, bracket factor, dark frame, auto exposure, settle times, sweep
@@ -135,7 +139,9 @@ Three brackets a factor of four apart, one device, dark frame per bracket:
 | whole-frame rate, same frames | 2186, 3244, 6301 counts/s - **65% spread** |
 | beam, summed over a region, per µs of exposure | 1177, 1249, 1227 counts/µs |
 | coupling stability over 9 frames | 1.0%, 3.7%, 4.2% spread of the ROI sum within a bracket |
-| dark frame | 11.82 counts of black level + 0.571 counts/ms of dark current, residuals < 0.25 counts |
+| dark frame, frame median | 5 to 12 counts, with no clear exposure dependence from 1 to 68 ms |
+| dark frame, peak inside the region | 379 counts at 68 ms, 9.3% of full scale - this is what limits the anchor |
+| hot pixel | one at (815, 821) running at 41.6 counts/ms, isolated; a second cluster near (1271, 486) |
 | background outside the beam | 1-2 counts/px, **independent of exposure** |
 | beam captured by a box | 15% at 40 px, 41% at 80 px, 68% at 138 px, 79% at 200 px |
 | ROI rate spread vs box size | 5-6% for every box from 30 to 138 px, 8.5% at 200 px |
@@ -144,6 +150,27 @@ The whole-frame rate climbs as the exposure shortens because the frame outside t
 background of one to two counts per pixel which does not scale with the exposure. Over a megapixel
 that is far more than the spot contributes to a frame mean, and dividing something constant by a
 shorter exposure inflates it. Inside a region around the beam it is under 1% of the sum.
+
+### The fit ranks by peak brightness, and the beam is not always the peak
+
+`fit integration ROI to spot` looks for the brightest pixel and then measures how far the pixels
+above half of it are spread. Two things on this setup beat a weak beam at that test, both of them
+worse the longer the exposure:
+
+- **Hot pixels.** One pixel here runs at 41.6 counts per millisecond, so at 68 ms it reads 2837 and
+  outshines everything. The fit now subtracts a frame taken at the same exposure with the light
+  off, which removes them exactly - they are the same pixels doing the same thing lit or not.
+- **A compact reflection.** At 1600 nm this device puts 2.2 million counts into a broad beam
+  peaking at 302 counts/px, and 12 thousand counts into a small spot peaking at 738 counts/px. The
+  reflection is 185 times weaker and still wins on peak brightness, so the fit picks it and returns
+  an 8x8 box in the wrong place.
+
+Auto exposure was fooled the same way before it was given the region to look in: it filled a hot
+pixel to the target and left the beam at 13%.
+
+So where the beam is broad and weak, set the region by hand. It only has to contain the beam and
+exclude the reflections, and its exact size barely matters - the cross-bracket spread was 5 to 6%
+for every box between 30 and 138 px. Check it once on a live image, then leave it fixed.
 
 ## Traps
 

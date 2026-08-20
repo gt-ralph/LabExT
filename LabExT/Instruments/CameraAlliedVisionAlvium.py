@@ -58,8 +58,14 @@ AUTO_EXPOSURE_SETTLE_FRAMES = 2
 
 
 def converge_exposure(camera, full_scale, target_fill=0.7, max_exposure=None, timeout_ms=None,
-                      max_frames=AUTO_EXPOSURE_MAX_FRAMES, tolerance=AUTO_EXPOSURE_TOLERANCE):
+                      max_frames=AUTO_EXPOSURE_MAX_FRAMES, tolerance=AUTO_EXPOSURE_TOLERANCE,
+                      region=None):
     """Scale a camera's exposure until its brightest pixel sits at `target_fill` of full scale.
+
+    `region` is `(x, y, width, height)` and limits which pixels count. Give it whenever the region
+    the beam lands in is known, because the brightest pixel in a whole frame need not be the beam:
+    this sensor has a hot pixel which reads 41.6 counts per millisecond of exposure, so past about
+    30 ms it outshines a weak spot and the exposure gets scaled to fill a defect instead.
 
     A free function rather than a method so that everything camera-shaped can use one
     implementation: a measurement drives a camera that is not streaming and snaps its own frames, a
@@ -98,11 +104,17 @@ def converge_exposure(camera, full_scale, target_fill=0.7, max_exposure=None, ti
             return image
         return camera.snap_photo(timeout_ms=timeout_ms)
 
+    def peak_of(image):
+        if region is None:
+            return float(np.max(image))
+        x, y, width, height = (int(v) for v in region)
+        return float(np.max(image[y:y + height, x:x + width]))
+
     peak_fill = float('nan')
     frames_used = 0
     for frames_used in range(1, int(max_frames) + 1):
         image = next_frame(discard=0 if frames_used == 1 else AUTO_EXPOSURE_SETTLE_FRAMES)
-        peak_fill = float(np.max(image)) / float(full_scale)
+        peak_fill = peak_of(image) / float(full_scale)
 
         if abs(peak_fill - target_fill) <= tolerance * target_fill:
             return {'status': 'converged',
