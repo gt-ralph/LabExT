@@ -1,9 +1,11 @@
 # Multi-device, multi-wavelength measurement with the camera as detector
 
-How to set up a run that sweeps wavelength over several devices with `CameraSnapshot` and an Allied
-Vision Alvium, and get a relative spectral response out of it rather than a set of unrelated
-pictures. The numbers quoted are measured on the happi setup on 2026-08-20; treat them as the scale
-of each effect rather than as constants.
+How to set up a run that sweeps wavelength over several devices with `CameraSnapshot` and a camera
+as the detector, and get a relative spectral response out of it rather than a set of unrelated
+pictures.
+
+Where this page gives a number it is an order of magnitude, not a constant. Every camera, chip and
+alignment differs, so the sections that matter end with how to measure the value for yours.
 
 ## Sweep the wavelength inside the measurement, not through the wizard
 
@@ -11,14 +13,14 @@ Set **wavelength stop** and **wavelength step** in `CameraSnapshot`. The measure
 laser itself and captures the full bracket set at every wavelength, which is what keeps the
 alignment out of the result:
 
-- **One to-do per device.** The stages are moved and Search for Peak is run once per to-do
-  ([`StandardExperiment.run`](https://github.com/LabExT/LabExT)), so with the sweep inside the
-  measurement they happen once per device, before the whole spectrum - not between wavelengths.
+- **One to-do per device.** The stages are moved and Search for Peak is run once per to-do, so with
+  the sweep inside the measurement they happen once per device, before the whole spectrum - not
+  between wavelengths.
 - **One result file per device**, with `wavelength nm` as a series beside the counts, so the
   spectrum plots live in the main window and needs no stitching afterwards.
-- **One exposure ladder and one auto exposure** for the whole spectrum. That matters: whatever
-  systematic an exposure carries is then identical at every wavelength and cancels in the ratio
-  between two of them.
+- **One exposure ladder, one integration region and one auto exposure** for the whole spectrum.
+  That is what makes two wavelengths comparable: whatever systematic those carry is then identical
+  at both and cancels in the ratio.
 
 Sweeping **laser wavelength** through the experiment wizard's parameter sweep instead is the trap
 this avoids. That makes one to-do per wavelength, so with *execute search for peak* enabled a
@@ -28,166 +30,164 @@ alignment as much as the device.
 So: *auto move stages to device* on, *execute search for peak* on, and the sweep set up in the
 measurement. Search for Peak then runs once per device, which is what you want.
 
-## Camera View, before the run
+## Before the run, in the Camera View
 
-1. Set **pixel format** to `Mono12`. Full scale is 4095 counts and this camera clips at 4094.
-2. Set the **exposure** so the peak sits around 60-70% of full scale at your *brightest* wavelength.
-   6000 µs gave a peak of 2678 counts (65%) on this setup.
-3. Press **Fit to spot** to set the integration ROI, then note the numbers. This is the region the
-   sums are taken over, and it is shared with the peak search.
+1. Set the **pixel format** to the deepest the camera offers. `Mono12` is the default here; the four
+   bits `Mono8` gives up are the ones the dim end of a spectrum is measured with.
+2. Set the **exposure** so the beam peaks around 60-70% of full scale, then read the anchor rule
+   below before settling on it.
+3. Press **Fit to spot**, and look at the box it draws. It should sit on the beam and exclude any
+   reflections. This is the region the sums are taken over, and it is shared with the peak search.
 4. **Press Stop.** While the viewer streams, the camera's frame layout is fixed, so bracketing and
    auto exposure are both skipped and you get one bracket at the viewer's exposure.
-5. Turn off any **ring light or illuminator** around the objective, and leave the room lights alone
-   for the whole run. A ring light left on puts room light into the dark frames, which then
-   subtract it off the signal as though it were sensor offset.
+5. Turn off any **ring light or illuminator**, and leave the room lights alone for the whole run.
+   Ambient light that is on for the frames and off for the darks, or vice versa, is subtracted as
+   though it were sensor offset.
 
 ## CameraSnapshot settings
 
 | parameter | value | why |
 |---|---|---|
-| pixel format | `Mono12` | 4095 counts of range; `Mono8` throws away four bits |
-| laser wavelength | first wavelength of the sweep, at the **dim** end of the band | this is where auto exposure sets the anchor, and the ladder only goes shorter from there - see below |
-| **wavelength stop** | last wavelength | 0 means no sweep; either direction works, so start at the dim end and sweep up or down as needed |
-| **wavelength step** | e.g. 5 nm | positive whichever way the sweep runs; every wavelength costs a settle plus every bracket and frame |
-| **wavelength settle time** | 0.2 s | a frame taken while the laser is still tuning was taken at a wavelength nobody recorded |
-| exposure time | peak at 60-70% at the brightest wavelength | this is the **longest** bracket; the ladder descends from it |
-| gain | leave at 0 dB | gain costs dynamic range and buys nothing a longer exposure does not |
-| **exposure brackets** | **3** | spans 16× with factor 4; use 4 brackets if the spectrum spans more than ~25 dB |
-| **exposure bracket factor** | **4** | |
-| **capture dark frame** | **on** | one dark per bracket, taken once after the sweep - the dark depends on exposure and gain, not on wavelength |
-| **auto exposure** | on for multi-device, off for a single device | it runs once before the sweep, so it adapts to each device while leaving the ladder fixed within a spectrum |
-| laser settle time | 0.2 s | enough on this setup - the darks came out at the expected black level with no light-leak warning |
-| integration ROI x/y/width/height | **set explicitly**, or leave at 0 to inherit the Camera View's box | a box fixed for the sweep cannot put its own area into the response, and it excludes hot pixels and reflections - see the warning below |
-| **fit integration ROI to spot** | on only where the beam is the brightest thing in the frame | the fit ranks by peak brightness, so a compact reflection can beat a broad beam |
-| number of frames | 1 for the bulk run, 3 for a validation point | three frames per bracket is what tells you whether the coupling held |
-| frame timeout | 5000 ms | must exceed the longest bracket |
-| save TIFF / PNG / NPY | **all off** for the bulk run | see the data budget below |
-| image output directory | e.g. `images` | a relative name lands next to the result file |
+| pixel format | the deepest available | range at the dim end is what runs out first |
+| laser wavelength | first wavelength, at the **dim** end of the band | this is where auto exposure sets the anchor, and the ladder only goes shorter from there |
+| **wavelength stop** | last wavelength | 0 means no sweep; either direction works |
+| **wavelength step** | as coarse as the features allow | every wavelength costs a settle plus every bracket and frame |
+| **wavelength settle time** | long enough for the laser to arrive and its power to level | see below - too short and a frame is taken at a wavelength nobody recorded |
+| exposure time | the anchor - see the anchor rule | this is the **longest** bracket; the ladder descends from it |
+| gain | 0 dB | gain costs dynamic range and buys nothing a longer exposure does not |
+| **exposure brackets** | enough to reach the bright end | each bracket is one *factor* further down; count them from the span of the spectrum |
+| **exposure bracket factor** | 4 | two stops per bracket is a reasonable stride |
+| **capture dark frame** | **on** | one dark per bracket, once for the sweep - the dark depends on exposure and gain, not on wavelength |
+| **auto exposure** | on for multi-device | it runs once before the sweep, so it adapts to each device while leaving the ladder fixed within a spectrum |
+| **auto exposure max** | the anchor ceiling from the rule below | this is what stops a dim device asking for an exposure the dark current owns |
+| laser settle time | long enough that the darks come out dark | the log warns when they do not |
+| integration ROI x/y/width/height | 0 to fit automatically, or set explicitly | see choosing the region |
+| **fit integration ROI to spot** | **on** for multi-device | each device emits into a different part of the frame |
+| number of frames | 1 for the bulk run, 3 for a validation point | repeats are how you tell coupling drift from spectrum |
+| frame timeout | longer than the anchor | a frame that takes longer than this never arrives |
+| save TIFF / PNG / NPY | **all off** for the bulk run | see the budget |
+| image output directory | a relative name lands next to the result file | |
 | close camera after measurement | off | keeps LabExT from re-opening the camera for every metadata read |
-
-### Anchor the ladder at the longest exposure the dark current allows
-
-The brackets descend from the exposure at the first wavelength, so that exposure decides how far
-down the spectrum the measurement can see; the short brackets catch the bright end. What stops the
-anchor from simply being made long enough for the dim end is the sensor's own dark current inside
-the integration region.
-
-Measured on this setup, 1510 to 1600 nm in 10 nm steps, three brackets anchored at 3208 us (67%
-fill at 1510): the brackets agreed to 1-7% down to -10 dB, to 18% at -17 dB, and by -23.6 dB the
-short brackets were reporting the sensor's noise peak rather than signal. About 10 dB of solid
-spectrum out of the 22 dB this device spans.
-
-Anchoring longer helps until the dark takes over. At 68 ms the dark's peak inside the region is 379
-counts, 9.3% of full scale - and at 1600 nm the beam's own peak is 530, only 1.4x that. Filling the
-beam to 70% at 1600 nm would need 369 ms, by which point dark current alone is past half full
-scale. So the dim end of this band is not exposure-limited, it is dark-current-limited, and no
-ladder recovers it.
-
-The rule that follows: anchor at the longest exposure whose dark peak inside the region stays
-around 10% of full scale - about 70 ms on this camera - and add brackets until the ladder reaches
-the bright end. Four brackets from 68 ms covers 1510 to 1600 with something unclipped everywhere.
-Accept that the last few wavelengths of a 22 dB spectrum are upper limits, not measurements, and
-read `saturated pixel fraction` and the bracket agreement to see where that starts.
 
 In the wizard, select the devices and add `CameraSnapshot`; leave its parameter sweep empty. The
 capture-shape settings - brackets, bracket factor, dark frame, auto exposure, settle times, sweep
-bounds, integration ROI, frame count, save flags - are marked non-sweepable and will not appear as
-sweep axes.
+bounds, integration region, frame count, save flags - are marked non-sweepable and will not appear
+as sweep axes.
 
-### Data budget
+## Choosing the anchor exposure
 
-A frame is 1032×1296×2 bytes = 2.7 MB. One device with 20 wavelengths × 3 brackets × 1 frame, plus
-3 darks, is 63 frames = 170 MB of TIFF; five devices is 850 MB. The result file already carries
-everything the analysis needs - per-frame ROI sums, dark sums, exposures, wavelengths, saturation
-fractions - so turn the save flags **off** for the bulk run and keep images only for the one
-validation device you check by hand.
+The brackets descend from the exposure at the first wavelength, so the anchor decides how far down
+the spectrum the measurement can see; the short brackets catch the bright end. The temptation is to
+make the anchor as long as the dim end needs. What stops you is the sensor's own dark current
+inside the integration region: past some exposure the dark fills the well, and subtracting it
+removes its mean but not its noise.
 
-Time per device is roughly `wavelengths × (settle + brackets × frames × exposure)` plus the search,
-so a 20-point sweep with 3 brackets at 6 ms and 0.2 s settles is about 5 s of laser and camera time
-per device, not counting the search.
+**To find the ceiling for your camera**, run `CameraSnapshot` once with `laser enabled` off and
+several brackets, and look at the dark frames it records. Take the peak inside the integration
+region, not the frame mean - a hot pixel elsewhere tells you nothing about the pixels you sum.
+The longest exposure whose in-region dark peak stays around a tenth of full scale is the anchor
+ceiling. Put that in **auto exposure max**.
+
+Then count brackets: enough that the anchor divided by the factor that many times reaches an
+exposure which does not clip at the brightest wavelength. A clipped long bracket at the bright end
+costs nothing, because a shorter one covers it; a dim end with no exposure long enough to see it
+cannot be recovered afterwards.
+
+Some part of a wide spectrum will still be dark-current-limited rather than exposure-limited. That
+is a property of the camera, not the settings, and the bracket agreement below is how you see where
+it starts.
+
+## Choosing the integration region
+
+The reported sums are taken over this region, and the choice matters more than its size. A whole
+frame is the wrong region: outside the beam every pixel contributes background that does not scale
+with the exposure, and dividing that by a shorter exposure inflates it, so the whole-frame rate
+climbs as the ladder descends where the region-summed rate stays flat. Measured once here, the
+whole-frame rate moved by a factor of three across a ladder over which the region-summed rate held
+to a few percent.
+
+Within reason the size is not critical - anything from a fraction of the spot to a few times it
+gave the same cross-bracket agreement here - but two things about it are:
+
+- **It must exclude hot pixels and reflections.** Both grow with exposure and neither is the beam.
+- **It must not change between wavelengths.** The fraction of the beam a box holds depends strongly
+  on its size, and if that fraction moves during the sweep it goes straight into the response
+  curve. The measurement fits once and holds, which is why.
+
+`fit integration ROI to spot` finds the beam by the most light in a box roughly a spot across,
+rather than by the brightest pixel, and subtracts a frame taken at the same exposure with the light
+off so that hot pixels cancel. Both matter because a compact reflection, or a hot pixel at a long
+exposure, is routinely brighter per pixel than a broad beam carrying orders of magnitude more
+light. If it cannot find a beam it says so in the log and sums the whole frame, which is a result
+worth discarding rather than trusting.
+
+Set the region by hand instead when the devices all put their beam in the same place, or when the
+fit picks something you can see is wrong. Check it once on a live image and leave it fixed.
+
+## Budgets
+
+**Data.** A frame is `width × height × 2` bytes for any 16-bit format, and a device costs
+`wavelengths × brackets × frames + brackets` of them. That reaches hundreds of megabytes per device
+quickly. The result file already carries everything the analysis needs - per-frame region sums, dark
+sums, exposures, wavelengths, saturation fractions - so turn the save flags **off** for the bulk run
+and keep images only for the one validation device you check by hand.
+
+**Time.** Roughly `wavelengths × (settle + brackets × frames × exposure)` plus the search and the
+stage move, per device.
 
 ## What to check when it finishes
 
 One file per device, with `wavelength nm`, `bracket index` and `exposure time us` saying what each
-row is:
+row is. Plot against `wavelength nm` and remember there is one row per bracket: a series like
+`max counts` or `exposure time us` will look like a comb, because the brackets are interleaved.
 
-- **`saturated pixel fraction`** - which brackets clipped. A clipped bracket 0 is normal and is what
-  the shorter brackets are for. Every bracket clipped at a wavelength means that point was not
+- **`roi counts per second`** - the series to plot. Agreement between the brackets at one wavelength
+  is the linearity check, and it is the single best indicator in the file: a few percent means the
+  ladder, the darks and the normalisation are all working, and it degrading at one end of the
+  spectrum is that end reaching the noise floor.
+- **`saturated pixel fraction`** - which brackets clipped. A clipped long bracket is normal and is
+  what the shorter ones are for. Every bracket clipped at a wavelength means that point was not
   measured, and the log names the wavelength.
-- **`roi counts per second`** - the series to plot against `wavelength nm`. Agreement between the
-  brackets at one wavelength is the linearity check: they should land within a few percent.
-- **`integration roi`** - if the ROI is being refitted per point, watch for its width and height
-  wandering. The fraction of the beam a box holds depends strongly on its size (15% at 40 px, 68%
-  at 138 px on this spot), and that fraction goes straight into the response.
-- **`dark frames`** - each carries its own mean and ROI sum. A "dark frame is not dark" warning
-  means light is still reaching the sensor: lengthen the settle time or close up the enclosure.
-- **`mean counts per second`** - do not use this one. It is whole-frame and it is not comparable
-  between brackets, for the reason below.
+- **`integration roi`** and **`auto exposure result`** - what the run actually aimed at and settled
+  on. A region far larger than the beam, or an auto exposure that did not converge, both mean the
+  run started from an exposure that suited something else.
+- **`dark frames`** - a "dark frame is not dark" warning means light is still reaching the sensor
+  inside the region: lengthen the laser settle time or close up the enclosure.
+- **`mean counts per second`** - do not use this one. It is whole-frame, for the reason above.
 
 Analysis recipe: per wavelength, take the longest bracket whose `saturated pixel fraction` is zero,
-and use its `roi counts per second`. A reference sweep with the device out of the path turns the result
-into the device's own response rather than the response of everything in the path, the laser's
-power flatness included.
+and use its `roi counts per second`. A reference sweep with the device out of the path turns the
+result into the device's own response rather than the response of everything in the path, the
+laser's power flatness included.
 
-## Measured on this setup, 2026-08-20
+## Characterising a new camera or setup
 
-Three brackets a factor of four apart, one device, dark frame per bracket:
+Worth doing once, and each one takes a single run:
 
-| quantity | value |
-|---|---|
-| ROI rate across a 16× exposure ladder | 2.429e9, 2.522e9, 2.597e9 counts/s - **6% spread** |
-| whole-frame rate, same frames | 2186, 3244, 6301 counts/s - **65% spread** |
-| beam, summed over a region, per µs of exposure | 1177, 1249, 1227 counts/µs |
-| coupling stability over 9 frames | 1.0%, 3.7%, 4.2% spread of the ROI sum within a bracket |
-| dark frame, frame median | 5 to 12 counts, with no clear exposure dependence from 1 to 68 ms |
-| dark frame, peak inside the region | 379 counts at 68 ms, 9.3% of full scale - this is what limits the anchor |
-| hot pixel | one at (815, 821) running at 41.6 counts/ms, isolated; a second cluster near (1271, 486) |
-| background outside the beam | 1-2 counts/px, **independent of exposure** |
-| beam captured by a box | 15% at 40 px, 41% at 80 px, 68% at 138 px, 79% at 200 px |
-| ROI rate spread vs box size | 5-6% for every box from 30 to 138 px, 8.5% at 200 px |
-
-The whole-frame rate climbs as the exposure shortens because the frame outside the beam carries a
-background of one to two counts per pixel which does not scale with the exposure. Over a megapixel
-that is far more than the spot contributes to a frame mean, and dividing something constant by a
-shorter exposure inflates it. Inside a region around the beam it is under 1% of the sum.
-
-### The fit ranks by peak brightness, and the beam is not always the peak
-
-`fit integration ROI to spot` looks for the brightest pixel and then measures how far the pixels
-above half of it are spread. Two things on this setup beat a weak beam at that test, both of them
-worse the longer the exposure:
-
-- **Hot pixels.** One pixel here runs at 41.6 counts per millisecond, so at 68 ms it reads 2837 and
-  outshines everything. The fit now subtracts a frame taken at the same exposure with the light
-  off, which removes them exactly - they are the same pixels doing the same thing lit or not.
-- **A compact reflection.** At 1600 nm this device puts 2.2 million counts into a broad beam
-  peaking at 302 counts/px, and 12 thousand counts into a small spot peaking at 738 counts/px. The
-  reflection is 185 times weaker and still wins on peak brightness, so the fit picks it and returns
-  an 8x8 box in the wrong place.
-
-Auto exposure was fooled the same way before it was given the region to look in: it filled a hot
-pixel to the target and left the beam at 13%.
-
-So where the beam is broad and weak, set the region by hand. It only has to contain the beam and
-exclude the reflections, and its exact size barely matters - the cross-bracket spread was 5 to 6%
-for every box between 30 and 138 px. Check it once on a live image, then leave it fixed.
+| what | how | what it tells you |
+|---|---|---|
+| dark level versus exposure | one run, `laser enabled` off, several brackets | the anchor ceiling, and whether dark current or a fixed black level dominates |
+| hot pixels | the same dark frames: look for isolated pixels far above their neighbours, and how fast they grow with exposure | which exposures the region has to be chosen carefully at |
+| linearity | one wavelength, three brackets, `number of frames` 3 | cross-bracket agreement is the whole chain's accuracy; frame-to-frame spread within a bracket is coupling stability |
+| region size sensitivity | re-sum saved frames over boxes of several sizes | how much the region size matters before it starts costing signal or collecting background |
+| usable dynamic range | one full sweep | where the bracket agreement degrades is where the spectrum stops being a measurement |
 
 ## Traps
 
 - **Sweeping `laser wavelength` through the wizard** gives one to-do per wavelength, and so one
   stage move and one search per wavelength. Use `wavelength stop` instead.
 - **A long sweep cannot be stopped part-way.** The experiment checks for a stop between to-dos, and
-  the sweep is inside one, so it finishes the device it is on. Shorter sweeps per device if that
-  matters.
-- **One dark set serves the whole sweep**, which assumes the sensor's dark level has not drifted
-  over it. A sweep repeated in the other direction shows up drift as a difference between the two.
+  the sweep is inside one, so it finishes the device it is on.
+- **One dark set serves the whole sweep**, which assumes the dark level has not drifted over it. A
+  sweep repeated in the other direction shows up drift as a difference between the two.
 - **The viewer streaming** silently costs you bracketing and auto exposure. It is logged as a
   warning; check the log if a run comes back with one bracket.
+- **A pixel format left in a shallower setting** by a previous session is inherited through the
+  handover file, and costs range the dim end needs.
 - **A saved instrument selection shadows `instruments.config`.** Removing an instrument from the
   config does not remove it from a window that once had it selected. Re-select the role and save.
-  It is logged as a warning naming the class and address.
 - **A dark frame is only valid at its own exposure and gain.** That is why they are taken per
-  bracket and per point rather than stored, and why nothing here reuses a dark from an earlier run.
-- **A frame median is not a substitute for a dark frame.** It is contaminated by the background
-  above, whose sign relative to the true dark changes with coupling, so it cannot be calibrated
-  out. Measured error against a real dark: 7% at good coupling, over 100% at a tenth of it.
+  bracket and per run rather than stored.
+- **A frame median is not a substitute for a dark frame** for absolute readings. It is contaminated
+  by the beam's own diffuse light, by an amount that changes with coupling, so it cannot be
+  calibrated out. It is fine for a peak search, which only compares readings to each other.
