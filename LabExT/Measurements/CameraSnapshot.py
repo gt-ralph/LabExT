@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Dict
 
 import numpy as np
 
+from LabExT.Instruments.CameraAlliedVisionAlvium import converge_exposure
 from LabExT.Instruments.PowerMeterCameraAlvium import PowerMeterCameraAlvium
 from LabExT.Measurements.MeasAPI import *
 from LabExT.Utils import get_configuration_file_path
@@ -545,15 +546,6 @@ class CameraSnapshot(Measurement):
                 path_stem + '.npy', image=image)))
         return file_names
 
-    #: how many frames auto exposure may spend converging. Each pass corrects multiplicatively, so
-    #: a frame three decades out of range is back in range after one; the rest of the budget is for
-    #: the passes after that, where a clipped frame hides its own peak and only iterating finds it.
-    AUTO_EXPOSURE_MAX_FRAMES = 5
-
-    #: how close to the target fill counts as converged, as a fraction of the target. Loose enough
-    #: that noise on a single peak pixel does not send it round another pass.
-    AUTO_EXPOSURE_TOLERANCE = 0.1
-
     #: peak fill above which a dark frame is reported as not dark. Well above the pedestal and the
     #: dark current of a short exposure, so it fires on light reaching the sensor rather than on a
     #: sensor doing what it normally does.
@@ -563,66 +555,36 @@ class CameraSnapshot(Measurement):
         """Scale the exposure until the brightest pixel sits at `target_fill` of full scale.
 
         Runs with the light on and settled, immediately before the frames are captured, so that the
-        exposure it settles on is the one they are taken at.
+        exposure it settles on is the one they are taken at. The convergence itself lives with the
+        camera driver, so that this measurement, the live Camera View's button and anything else
+        that needs it are the same code rather than three loops that drift apart.
 
         Returns:
             dict: what happened, for the result file: the exposure reached, the peak fill of the
             last frame taken - which is always a frame at that exposure - the number of frames it
             cost and whether it converged.
         """
-        low, high = self.instr_camera.exposure_time_range
-        ceiling = min(high, float(max_exposure))
-        exposure = float(self.instr_camera.exposure_time)
-        peak_fill = float('nan')
-        converged = False
-        frames_used = 0
+        outcome = converge_exposure(
+            self.instr_camera,
+            # The dtype is only the fallback for a format name that carries no bit count, which
+            # Mono8, Mono10 and Mono12 all do, so it never decides anything here.
+            full_scale=_full_scale_counts(self.instr_camera.pixel_format, np.uint16),
+            target_fill=target_fill,
+            max_exposure=max_exposure,
+            timeout_ms=int(frame_timeout))
 
-        for frames_used in range(1, self.AUTO_EXPOSURE_MAX_FRAMES + 1):
-            image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
-            full_scale = _full_scale_counts(self.instr_camera.pixel_format, image.dtype)
-            peak_fill = float(np.max(image)) / full_scale
-
-            if abs(peak_fill - target_fill) <= self.AUTO_EXPOSURE_TOLERANCE * target_fill:
-                converged = True
-                break
-
-            if frames_used == self.AUTO_EXPOSURE_MAX_FRAMES:
-                # Out of budget, and deliberately without a last adjustment: an exposure nothing
-                # was measured at would go into the result file as though it had been checked.
-                self.logger.warning(
-                    "Auto exposure gave up after %d frames at %.1f us, with the peak at %.1f%% of "
-                    "full scale instead of %.1f%%. The frames are captured at this exposure.",
-                    frames_used, exposure, 100.0 * peak_fill, 100.0 * target_fill)
-                break
-
-            if peak_fill <= 0.0:
-                # A frame with nothing in it gives no ratio to scale by, so go straight to the
-                # longest exposure allowed: either something appears, or the point really is dark.
-                wanted = ceiling
-            else:
-                # A clipped frame does not show its own peak - every railed pixel reads full scale
-                # whatever the light behind it - so this is a lower bound on the reduction needed
-                # rather than the answer, and iterating is what recovers the rest.
-                wanted = exposure * target_fill / peak_fill
-            self.instr_camera.exposure_time = min(max(wanted, low), ceiling)
-
-            reached = float(self.instr_camera.exposure_time)
-            if abs(reached - exposure) <= 1e-6 * max(exposure, 1.0):
-                # Nothing moved: the request was clamped or snapped back to the exposure already
-                # set, so another pass would take the same frame again. The fill measured above
-                # still describes this exposure, precisely because it did not change.
-                self.logger.warning(
-                    "Auto exposure cannot reach %.1f%% of full scale: the exposure is stuck at "
-                    "%.1f us (allowed %.1f to %.1f us) with the peak at %.1f%%.",
-                    100.0 * target_fill, exposure, low, ceiling, 100.0 * peak_fill)
-                break
-            exposure = reached
+        if outcome['status'] != 'converged':
+            # Both failures leave the frames being captured at an exposure nobody chose, which is
+            # worth saying out loud; only 'at a limit' is a setting the user can do something about.
+            self.logger.warning("Auto exposure %s. The frames are captured at this exposure.",
+                                outcome['note'])
 
         return {
-            'converged': bool(converged),
-            'frames used': int(frames_used),
+            'converged': outcome['status'] == 'converged',
+            'status': outcome['status'],
+            'frames used': int(outcome['frames used']),
             'exposure time us': float(self.instr_camera.exposure_time),
-            'peak fill': float(peak_fill),
+            'peak fill': float(outcome['peak fill']),
             'target fill': float(target_fill),
         }
 

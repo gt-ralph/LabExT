@@ -14,6 +14,7 @@ import time
 from tkinter import (BOTH, BOTTOM, DISABLED, HORIZONTAL, LEFT, NORMAL, RIGHT, TOP, X, Y,
                      BooleanVar, Button, Canvas, Checkbutton, Entry, Frame, Label, OptionMenu,
                      Scale, StringVar, Toplevel, filedialog, messagebox)
+from tkinter.ttk import Notebook
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -21,6 +22,7 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 
 from LabExT.Measurements.CameraSnapshot import CameraSnapshot
+from LabExT.Instruments.CameraAlliedVisionAlvium import converge_exposure
 from LabExT.Instruments.PowerMeterCameraAlvium import PowerMeterCameraAlvium
 from LabExT.Utils import get_configuration_file_path, get_visa_address
 from LabExT.View.Controls.CustomFrame import CustomFrame
@@ -126,15 +128,33 @@ class CameraViewWindow(Toplevel):
         controls = Frame(main)
         controls.pack(side=RIGHT, fill=Y, padx=5, pady=5)
 
+        # Connecting and exposure stay outside the tabs. They are what a hand is on while looking
+        # at the image, and nine panels in one column meant the ones that matter were off the
+        # bottom of the window; everything that is set occasionally moved behind a tab instead.
         self._build_instrument_controls(controls)
         self._build_exposure_gain_controls(controls)
-        self._build_format_roi_controls(controls)
-        self._build_display_controls(controls)
-        self._build_save_controls(controls)
-        self._build_integration_roi_controls(controls)
-        self._build_integration_readout(controls)
-        self._build_dark_reference_controls(controls)
-        self._build_histogram(controls)
+
+        self._tabs = tabs = Notebook(controls)
+        tabs.pack(side=TOP, fill=BOTH, expand=True, pady=(6, 0))
+
+        image_tab = Frame(tabs)
+        measure_tab = Frame(tabs)
+        save_tab = Frame(tabs)
+        tabs.add(image_tab, text=' Image ')
+        tabs.add(measure_tab, text=' Measure ')
+        tabs.add(save_tab, text=' Save ')
+
+        # what the picture looks like
+        self._build_format_roi_controls(image_tab)
+        self._build_display_controls(image_tab)
+        self._build_histogram(image_tab)
+
+        # what the numbers mean: the region a search and a measurement sum, and its background
+        self._build_integration_roi_controls(measure_tab)
+        self._build_integration_readout(measure_tab)
+        self._build_dark_reference_controls(measure_tab)
+
+        self._build_save_controls(save_tab)
 
     def _build_instrument_controls(self, parent):
         self.available_instruments = {}
@@ -184,6 +204,22 @@ class CameraViewWindow(Toplevel):
                                  orient=HORIZONTAL, showvalue=False, length=220,
                                  command=self._on_gain_slider)
         self._gain_scale.grid(row=3, column=0, columnspan=2, sticky='we')
+
+        # Auto exposure, the same convergence the CameraSnapshot measurement runs, so that dialling
+        # it in here and letting a measurement do it are one implementation rather than two.
+        Label(frame, text="auto target [%]").grid(row=4, column=0, sticky='w')
+        self._auto_target_var = StringVar(self, value='70')
+        Entry(frame, textvariable=self._auto_target_var, width=7).grid(row=4, column=1, sticky='e')
+        Label(frame, text="auto max [ms]").grid(row=5, column=0, sticky='w')
+        self._auto_max_var = StringVar(self, value='200')
+        Entry(frame, textvariable=self._auto_max_var, width=7).grid(row=5, column=1, sticky='e')
+        self._auto_exposure_button = Button(frame, text="Auto Exposure",
+                                           command=self._on_auto_exposure)
+        self._auto_exposure_button.grid(row=6, column=0, columnspan=2, sticky='we', pady=(4, 0))
+        self._auto_exposure_note_var = StringVar(self, value="")
+        Label(frame, textvariable=self._auto_exposure_note_var, anchor='w', justify=LEFT,
+              wraplength=240).grid(row=7, column=0, columnspan=2, sticky='we')
+
         frame.columnconfigure(0, weight=1)
 
     def _build_format_roi_controls(self, parent):
@@ -591,6 +627,7 @@ class CameraViewWindow(Toplevel):
         self._start_button.config(state=NORMAL if connected and not streaming else DISABLED)
         self._stop_button.config(state=NORMAL if streaming else DISABLED)
         self._apply_button.config(state=NORMAL if connected else DISABLED)
+        self._auto_exposure_button.config(state=NORMAL if connected else DISABLED)
         self._handover_button.config(state=NORMAL if connected else DISABLED)
         self._dark_button.config(state=NORMAL if connected else DISABLED)
         self._save_button.config(
@@ -660,6 +697,65 @@ class CameraViewWindow(Toplevel):
         """
         match = re.search(r'(\d+)', str(pixel_format_name))
         return int(match.group(1)) if match else 8
+
+    def _on_auto_exposure(self):
+        """Scale the exposure until the brightest pixel sits at the target fraction of full scale.
+
+        Works whether or not the preview is running: streaming, it reads the stream the preview is
+        already reading; stopped, it snaps its own frames.
+        """
+        if not self._connected:
+            messagebox.showinfo("Not connected", "Connect to the camera first.", parent=self)
+            return
+
+        try:
+            target_fill = float(self._auto_target_var.get()) / 100.0
+            max_exposure = float(self._auto_max_var.get()) * 1000.0
+        except ValueError:
+            messagebox.showerror("Invalid input", "Target and maximum must be numbers.",
+                                 parent=self)
+            return
+        if not 0.0 < target_fill < 1.0:
+            messagebox.showerror("Invalid input", "Target must be between 0 and 100 percent.",
+                                 parent=self)
+            return
+        if max_exposure <= 0.0:
+            messagebox.showerror("Invalid input", "Maximum exposure must be positive.", parent=self)
+            return
+
+        # On the GUI thread, like the dark capture and the ROI fit beside it. It is bounded by a
+        # handful of frames at no more than the maximum above, so the freeze is that long and no
+        # longer - which is the reason for the maximum being a field rather than the sensor's own.
+        self._auto_exposure_button.config(state=DISABLED)
+        self._auto_exposure_note_var.set("Converging...")
+        self.update_idletasks()
+        try:
+            outcome = converge_exposure(
+                self.camera,
+                # from the pixel format, not the array dtype: Mono12 arrives in a uint16 array but
+                # fills 12 bits, so full scale is 4095 and not 65535
+                full_scale=float(2 ** self._display_bit_depth - 1),
+                target_fill=target_fill,
+                max_exposure=max_exposure)
+        except Exception as exc:
+            self.logger.exception("Auto exposure failed.")
+            self._auto_exposure_note_var.set("Failed: {!s}".format(exc))
+            self._update_button_states()
+            return
+
+        if outcome['status'] == 'converged':
+            self.logger.info("Auto exposure: %s", outcome['note'])
+        else:
+            self.logger.warning("Auto exposure %s.", outcome['note'])
+        self._auto_exposure_note_var.set(outcome['note'])
+
+        # Follow the camera rather than the other way round: setting the scale fires its callback,
+        # which would otherwise have the next tick write the slider's own coarser value back over
+        # the exposure that was just converged on.
+        self._exposure_scale.set(np.log10(self.camera.exposure_time))
+        self._exposure_value_var.set("{:.1f}".format(self.camera.exposure_time))
+        self._pending_exposure = None
+        self._update_button_states()
 
     def _on_start(self):
         try:
@@ -1077,6 +1173,8 @@ class CameraViewWindow(Toplevel):
                 'save png': bool(self._save_png_var.get()),
                 'save tiff': bool(self._save_tiff_var.get()),
                 'dark frames': self._dark_frames_var.get(),
+                'auto exposure target': self._auto_target_var.get(),
+                'auto exposure max': self._auto_max_var.get(),
             })
             if self._connected:
                 settings['exposure time'] = float(self.camera.exposure_time)
@@ -1112,6 +1210,8 @@ class CameraViewWindow(Toplevel):
             self._save_png_var.set(bool(settings.get('save png', True)))
             self._save_tiff_var.set(bool(settings.get('save tiff', True)))
             self._dark_frames_var.set(str(settings.get('dark frames', '16')))
+            self._auto_target_var.set(str(settings.get('auto exposure target', '70')))
+            self._auto_max_var.set(str(settings.get('auto exposure max', '200')))
         except (KeyError, IndexError, ValueError, TypeError, json.JSONDecodeError):
             self.logger.exception("Camera view settings could not be applied, using defaults.")
 

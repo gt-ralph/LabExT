@@ -43,6 +43,109 @@ PACKED_CONVERSION_TARGET = 'Mono16'
 DEFAULT_FRAME_TIMEOUT_MS = 5000
 
 
+#: how many frames auto exposure may spend converging. Each pass corrects multiplicatively, so a
+#: frame three decades out of range is back in range after one; the rest of the budget is for the
+#: passes after that, where a clipped frame hides its own peak and only iterating finds it.
+AUTO_EXPOSURE_MAX_FRAMES = 5
+
+#: how close to the target fill counts as converged, as a fraction of the target. Loose enough that
+#: noise on a single peak pixel does not send it round another pass.
+AUTO_EXPOSURE_TOLERANCE = 0.1
+
+#: frames dropped after each change while streaming. Frames already in flight were exposed before
+#: the change, so measuring the next one would score the exposure that has just been replaced.
+AUTO_EXPOSURE_SETTLE_FRAMES = 2
+
+
+def converge_exposure(camera, full_scale, target_fill=0.7, max_exposure=None, timeout_ms=None,
+                      max_frames=AUTO_EXPOSURE_MAX_FRAMES, tolerance=AUTO_EXPOSURE_TOLERANCE):
+    """Scale a camera's exposure until its brightest pixel sits at `target_fill` of full scale.
+
+    A free function rather than a method so that everything camera-shaped can use one
+    implementation: a measurement drives a camera that is not streaming and snaps its own frames, a
+    live view drives one that is streaming and reads that stream instead, and a test drives a stub.
+    All it needs of `camera` is `exposure_time`, `exposure_time_range`, `is_streaming`, and either
+    `snap_photo` or `latest_streamed_frame`.
+
+    `full_scale` is passed in rather than derived here: the caller already knows the bit depth of
+    the format it is working in, and deriving it in a fourth place is how the saturation reporting
+    went wrong once already.
+
+    The peak fill reported is always measured at the exposure reported, never at one the loop was
+    about to leave: the last pass measures and does not adjust.
+
+    Returns:
+        dict: `status` is `'converged'`, `'out of frames'` or `'at a limit'`; `note` is one line
+        for a log or a status bar; plus `exposure time us`, `peak fill`, `target fill` and
+        `frames used`.
+    """
+    low, high = camera.exposure_time_range
+    ceiling = min(float(high), float(max_exposure)) if max_exposure else float(high)
+    floor = float(low)
+    exposure = float(camera.exposure_time)
+    timeout_s = None if timeout_ms is None else float(timeout_ms) / 1000.0
+    seen = [None]  # stream counter, so each read waits for a frame newer than the last
+
+    def next_frame(discard=0):
+        if getattr(camera, 'is_streaming', False):
+            image = None
+            for _ in range(discard + 1):
+                image, seen[0] = camera.latest_streamed_frame(
+                    newer_than=seen[0], timeout_s=5.0 if timeout_s is None else timeout_s)
+                if image is None:
+                    raise InstrumentException(
+                        "No new frame arrived from the camera stream while setting the exposure.")
+            return image
+        return camera.snap_photo(timeout_ms=timeout_ms)
+
+    peak_fill = float('nan')
+    frames_used = 0
+    for frames_used in range(1, int(max_frames) + 1):
+        image = next_frame(discard=0 if frames_used == 1 else AUTO_EXPOSURE_SETTLE_FRAMES)
+        peak_fill = float(np.max(image)) / float(full_scale)
+
+        if abs(peak_fill - target_fill) <= tolerance * target_fill:
+            return {'status': 'converged',
+                    'note': "peak at {:.1f}% of full scale after {:d} frames, exposure {:.1f} us"
+                            .format(100.0 * peak_fill, frames_used, exposure),
+                    'exposure time us': exposure, 'peak fill': peak_fill,
+                    'target fill': float(target_fill), 'frames used': frames_used}
+
+        if frames_used == int(max_frames):
+            break
+
+        if peak_fill <= 0.0:
+            # A frame with nothing in it gives no ratio to scale by, so go straight to the longest
+            # exposure allowed: either something appears, or the view really is dark.
+            wanted = ceiling
+        else:
+            # A clipped frame does not show its own peak - every railed pixel reads full scale
+            # whatever the light behind it - so this is a lower bound on the change needed rather
+            # than the answer, which is why it iterates.
+            wanted = exposure * target_fill / peak_fill
+        camera.exposure_time = min(max(wanted, floor), ceiling)
+
+        reached = float(camera.exposure_time)
+        if abs(reached - exposure) <= 1e-6 * max(exposure, 1.0):
+            # Nothing moved: the request was clamped or snapped back onto the exposure already set,
+            # so another pass would measure the same frame again. The fill measured above still
+            # describes this exposure, precisely because it did not change.
+            return {'status': 'at a limit',
+                    'note': "stuck at {:.1f} us (allowed {:.1f} to {:.1f} us) with the peak at "
+                            "{:.1f}%, wanted {:.1f}%".format(
+                                exposure, floor, ceiling, 100.0 * peak_fill, 100.0 * target_fill),
+                    'exposure time us': exposure, 'peak fill': peak_fill,
+                    'target fill': float(target_fill), 'frames used': frames_used}
+        exposure = reached
+
+    return {'status': 'out of frames',
+            'note': "gave up after {:d} frames at {:.1f} us, with the peak at {:.1f}% instead of "
+                    "{:.1f}%".format(frames_used, exposure, 100.0 * peak_fill,
+                                     100.0 * target_fill),
+            'exposure time us': exposure, 'peak fill': peak_fill,
+            'target fill': float(target_fill), 'frames used': frames_used}
+
+
 class _StreamedFrameSlot:
     """Holds the most recent streamed frame, with a counter so a reader can demand a fresh one.
 

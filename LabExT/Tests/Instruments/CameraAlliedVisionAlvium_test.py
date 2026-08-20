@@ -22,7 +22,7 @@ import unittest
 
 import numpy as np
 
-from LabExT.Instruments.CameraAlliedVisionAlvium import CameraAlliedVisionAlvium
+from LabExT.Instruments.CameraAlliedVisionAlvium import CameraAlliedVisionAlvium, converge_exposure
 from LabExT.Instruments.InstrumentAPI import InstrumentException
 from LabExT.Tests.Utils import mark_as_laboratory_test
 
@@ -412,3 +412,115 @@ class CameraAlliedVisionAlviumStreamingSettingsTest(unittest.TestCase):
         self.instr.pixel_format = 'Mono12'
         self.assertEqual(self.instr.pixel_format, 'Mono12')
         self.assertEqual(self.instr.set_roi(640, 480, 0, 0)[:2], [640, 480])
+
+
+class ConvergeExposureTest(unittest.TestCase):
+    """
+    Tests for the shared auto-exposure routine, against stub cameras.
+
+    Required lab setup: none, only SW testing. Deliberately not part of the class above: the
+    convergence is what a measurement, the live Camera View and a peak search all call, so it has
+    to be checkable without the camera being on the bench.
+    """
+
+    user_input_required = False
+
+    class SnappingCamera:
+        """A linear sensor that hands over a frame on demand, exposed as asked."""
+
+        exposure_time_range = [20.0, 1000000.0]
+        is_streaming = False
+        pixel_format = 'Mono12'
+
+        def __init__(self, rate=0.05, full_scale=4095.0):
+            self.rate = rate
+            self.full_scale = full_scale
+            self._exposure = 100.0
+            self.frames_taken = 0
+
+        @property
+        def exposure_time(self):
+            return self._exposure
+
+        @exposure_time.setter
+        def exposure_time(self, value):
+            low, high = self.exposure_time_range
+            self._exposure = float(min(max(round(float(value)), low), high))
+
+        def _frame_at(self, exposure):
+            self.frames_taken += 1
+            frame = np.zeros((8, 8), dtype=np.uint16)
+            frame[4, 4] = min(self.rate * exposure, self.full_scale - 1.0)
+            return frame
+
+        def snap_photo(self, timeout_ms=None):
+            return self._frame_at(self._exposure)
+
+    class StreamingCamera(SnappingCamera):
+        """The same sensor, but read through a stream which is two frames behind the setting.
+
+        That lag is the point: frames already in flight when the exposure changes were exposed
+        before it, so a loop which measures the very next frame scores the exposure it just left.
+        """
+
+        is_streaming = True
+        LAG = 2
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pipeline = [self._exposure] * self.LAG
+            self._counter = 0
+
+        def latest_streamed_frame(self, newer_than=None, timeout_s=5.0):
+            exposed_at = self._pipeline.pop(0)
+            self._pipeline.append(self._exposure)
+            self._counter += 1
+            return self._frame_at(exposed_at), self._counter
+
+    def test_snapping_camera_converges_on_the_target(self):
+        camera = self.SnappingCamera()
+        outcome = converge_exposure(camera, full_scale=4095.0, target_fill=0.7)
+
+        self.assertEqual('converged', outcome['status'])
+        self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
+        # the fill reported was measured at the exposure reported
+        self.assertEqual(camera.exposure_time, outcome['exposure time us'])
+
+    def test_streaming_camera_converges_to_the_same_exposure(self):
+        """The frames in flight must not be what it converges on; the stale ones are dropped."""
+        snapped = self.SnappingCamera()
+        converge_exposure(snapped, full_scale=4095.0, target_fill=0.7)
+
+        streamed = self.StreamingCamera()
+        outcome = converge_exposure(streamed, full_scale=4095.0, target_fill=0.7)
+
+        self.assertEqual('converged', outcome['status'])
+        self.assertEqual(snapped.exposure_time, streamed.exposure_time)
+        # it costs frames to let the pipeline drain, which is why it is bounded
+        self.assertGreater(streamed.frames_taken, snapped.frames_taken)
+
+    def test_stops_at_the_maximum_it_is_given(self):
+        camera = self.SnappingCamera(rate=1e-5)  # too insensitive to reach the target in range
+        outcome = converge_exposure(camera, full_scale=4095.0, target_fill=0.7,
+                                    max_exposure=50000.0)
+
+        self.assertEqual('at a limit', outcome['status'])
+        self.assertEqual(50000.0, camera.exposure_time)
+        self.assertLess(outcome['peak fill'], 0.7)
+        self.assertIn('stuck', outcome['note'])
+
+    def test_a_dark_view_goes_to_the_longest_exposure_allowed(self):
+        camera = self.SnappingCamera(rate=0.0)  # nothing to see at any exposure
+        outcome = converge_exposure(camera, full_scale=4095.0, target_fill=0.7,
+                                    max_exposure=30000.0)
+
+        self.assertNotEqual('converged', outcome['status'])
+        self.assertEqual(30000.0, camera.exposure_time)
+
+    def test_a_clipped_view_takes_more_than_one_pass(self):
+        camera = self.SnappingCamera(rate=50.0)  # railed at the starting exposure
+        outcome = converge_exposure(camera, full_scale=4095.0, target_fill=0.7)
+
+        self.assertEqual('converged', outcome['status'])
+        self.assertGreater(outcome['frames used'], 1)
+        self.assertAlmostEqual(0.7, outcome['peak fill'], delta=0.07)
