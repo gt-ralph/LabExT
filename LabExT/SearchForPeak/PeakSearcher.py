@@ -124,6 +124,13 @@ class PeakSearcher(Measurement):
     #: instrument is not polluted by readings from meters that are not part of the setup.
     UNUSED_INSTRUMENT_CLASS = '-- not used --'
 
+    #: Roles a search can run without: the meters because only one detector has to be filled, the
+    #: switch because it is only touched when 'Switch Flag' is on. A role listed here may also be
+    #: absent from instruments.config altogether, which is how a bench without one is described -
+    #: the Search for Peak window offers those as UNUSED_INSTRUMENT_CLASS instead of refusing to
+    #: open. Only 'Laser' is genuinely required, and search_for_peak() is where that is enforced.
+    OPTIONAL_ROLES = POWER_METER_ROLES + ['Switch']
+
     def __init__(
         self,
         *args,
@@ -310,6 +317,13 @@ class PeakSearcher(Measurement):
         for role in self.get_wanted_instrument():
             descriptor = self.selected_instruments.get(role, {})
             if descriptor.get('class') == self.UNUSED_INSTRUMENT_CLASS:
+                skipped.append(role)
+                continue
+            if not descriptor:
+                # Nothing selected for this role at all, which is what an optional role missing
+                # from instruments.config looks like. Instantiating from an empty descriptor fails
+                # deep in the instrument API with nothing to point at, so skip it here and let
+                # search_for_peak() reject the roles it actually needs, by name.
                 skipped.append(role)
                 continue
             self._experiment_manager.instrument_api.create_instrument_obj(

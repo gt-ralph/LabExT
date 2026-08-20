@@ -124,6 +124,11 @@ class PlottingSettingWidget(Toplevel):
     def __init__(self, root, model, view, controller):
         Toplevel.__init__(self, root)
         view.current_window = self
+        # Also handed to the controller directly: the close button below is bound to it before the
+        # rest of this window exists, and the controller only learns about the view once its
+        # constructor returns. Without this a failure in between leaves a mapped window whose only
+        # handler raises AttributeError, so it cannot even be closed.
+        controller.window = self
 
         self.model = model
         self.root = root
@@ -215,11 +220,27 @@ class InstrumentsChooserWidget(InstrumentSelector):
         available_instruments = dict()
         # the roles come from the searcher itself, so the two cannot drift apart
         for role in PeakSearcher.get_wanted_instrument():
-            io_set = list(get_visa_address(role))
-            if role in PeakSearcher.POWER_METER_ROLES:
-                # Offer leaving a meter slot out entirely. Only one detector is required, and a
-                # search fed by a camera or a single photodiode should not also be reading meters
-                # that are not part of the setup.
+            optional = role in PeakSearcher.OPTIONAL_ROLES
+            try:
+                io_set = list(get_visa_address(role))
+            except RuntimeError:
+                # instruments.config has no section for this role. For an optional one that is a
+                # description of the bench rather than a mistake - a setup with no switch - so it
+                # is offered as unused. Refusing here instead would make removing an instrument
+                # from the config break a window that never needed that instrument.
+                if not optional:
+                    raise RuntimeError(
+                        "Search for Peak needs a '{0}' section in instruments.config, and there "
+                        "is none. Add one, or add '{0}' to PeakSearcher.OPTIONAL_ROLES if a "
+                        "search should be able to run without it.".format(role))
+                self.logger.info(
+                    "instruments.config has no '%s' section, so Search for Peak offers that role "
+                    "as '%s'.", role, PeakSearcher.UNUSED_INSTRUMENT_CLASS)
+                io_set = []
+            if optional:
+                # Offer leaving the slot out entirely. Only one detector is required, and a search
+                # fed by a camera or a single photodiode should not also be reading meters that are
+                # not part of the setup; the switch is only used when 'Switch Flag' is on.
                 io_set.insert(0, {'visa': 'None',
                                   'class': PeakSearcher.UNUSED_INSTRUMENT_CLASS,
                                   'channels': []})
@@ -440,6 +461,10 @@ class SearchForPeakPlotsWindowController:
     Contains all logic as function, and is stored as a reference in both the model and view classes.
     """
     def __init__(self, parent: Tk, experiment_manager):
+        # set by PlottingSettingWidget as soon as the window exists, so that a failure while the
+        # rest of it is being built still has something to tear down
+        self.window = None
+
         # set up model and view classes
         self.model = SearchForPeakPlotsWindowModel(experiment_manager)
         # load the peak searcher and save it to the model
@@ -455,12 +480,28 @@ class SearchForPeakPlotsWindowController:
         # load the observed lists data structures from the peak searcher
         self.model.load_observed_list()
 
-        self.view = SearchForPeakPlotsWindowView(parent, self.model, self)
+        try:
+            self.view = SearchForPeakPlotsWindowView(parent, self.model, self)
+        except Exception:
+            # Leave nothing half-built behind: an empty window the user cannot close is worse than
+            # no window, and it hides the error that caused it behind a second one.
+            if self.window is not None:
+                self.window.destroy()
+                self.window = None
+            raise
 
     def on_close(self):
         """
         If user presses 'x', exit the plotting window.
         """
+        if getattr(self, 'view', None) is None:
+            # The window came up but its contents did not, so there is no selection or parameter
+            # table to save - just the window to take down.
+            if self.window is not None:
+                self.window.destroy()
+                self.window = None
+            return
+
         # Clear all callbacks because the PeakSearcher object still exists after killing this window
         # but contains callbacks to this window which we are about to destroy now.
         self.view.main_window.plotting_frame.plot_left.data_source = None
