@@ -79,6 +79,19 @@ def make_meter(camera, **kwargs):
     return meter
 
 
+def spot_frame(shape, level, dtype=np.uint8, patch=(slice(2, 6), slice(2, 6))):
+    """A frame with no background and one bright patch, so that its sum identifies it.
+
+    Zero background on purpose. Without a dark reference the meter takes the median of the frame as
+    its background and subtracts it, so a uniformly filled frame is all background and integrates
+    to nothing - which is correct, and which makes a flat frame useless for checking that the sum
+    covers the pixels it should.
+    """
+    frame = np.zeros(shape, dtype=dtype)
+    frame[patch] = level
+    return frame
+
+
 class PowerMeterCameraAlviumTest(unittest.TestCase):
 
     def setUp(self):
@@ -96,29 +109,31 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
     #
 
     def test_roi_sum_matches_manual_sum(self):
-        frame = np.arange(16 * 20, dtype=np.uint8).reshape(16, 20) % 200
+        # structured values inside a dark frame, so a ROI off by a row sums something different
+        frame = np.zeros((16, 20), dtype=np.uint8)
+        frame[1:9, 3:13] = (np.arange(8 * 10, dtype=np.uint8).reshape(8, 10) % 200) + 1
         meter = make_meter(StubCamera([frame]), roi_x=4, roi_y=2, roi_width=6, roi_height=5)
         meter.open()
         expected = float(frame[2:7, 4:10].sum(dtype=np.float64))
         self.assertAlmostEqual(meter.fetch_power(), expected, places=6)
 
     def test_zero_size_roi_means_whole_frame(self):
-        frame = np.ones((16, 20), dtype=np.uint8)
+        frame = spot_frame((16, 20), 8, patch=(slice(4, 8), slice(5, 15)))  # 4 * 10 * 8
         meter = make_meter(StubCamera([frame]))
         meter.open()
         self.assertAlmostEqual(meter.fetch_power(), 320.0, places=6)
 
     def test_full_frame_uint16_sum_does_not_overflow(self):
         # numpy sums integers in the platform default int, uint32 on Windows: a full-scale Mono12
-        # frame this size sums past 2**32 and silently wraps unless float64 is forced
+        # frame this size sums past 2**32 and silently wraps unless float64 is forced. Checked on
+        # integrate_patch rather than through a reading, because a frame bright enough to overflow
+        # is one whose median is bright too, so a reading of it is all background.
         frame = np.full((1032, 1296), 4095, dtype=np.uint16)
-        meter = make_meter(StubCamera([frame], pixel_format='Mono12'),
-                           saturation_fraction_limit=1.1)  # allow the deliberately saturated frame
-        meter.open()
-        self.assertAlmostEqual(meter.fetch_power(), float(1032 * 1296 * 4095), places=0)
+        self.assertAlmostEqual(PowerMeterCameraAlvium.integrate_patch(frame),
+                               float(1032 * 1296 * 4095), places=0)
 
     def test_db_mode_is_ten_log_ten_of_counts(self):
-        frame = np.full((8, 8), 10, dtype=np.uint8)
+        frame = spot_frame((8, 8), 40)  # 4 * 4 * 40 = 640
         meter = make_meter(StubCamera([frame]), merit_unit='dB')
         meter.open()
         self.assertAlmostEqual(meter.fetch_power(), 10.0 * np.log10(640.0), places=9)
@@ -191,6 +206,64 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         meter = make_meter(StubCamera(), require_dark_reference=False)
         meter.open()
         self.assertFalse(meter.dark_reference_available)
+
+    #
+    # background estimated from the frame, for when there is no measured dark
+    #
+
+    def test_estimate_background_ignores_the_beam(self):
+        pedestal = 12
+        frame = np.full((64, 64), pedestal, dtype=np.uint16)
+        frame[30:34, 30:34] = 4000  # a bright spot, 0.4% of the pixels
+        self.assertEqual(float(pedestal), PowerMeterCameraAlvium.estimate_background(frame))
+
+        # and a hot pixel does not move it either, which is why the median and not the mean
+        frame[0, 0] = 65535
+        self.assertEqual(float(pedestal), PowerMeterCameraAlvium.estimate_background(frame))
+
+    def test_estimated_background_removes_the_pedestal_without_a_dark(self):
+        pedestal, signal = 30, 5
+        frame = np.full((16, 20), pedestal, dtype=np.uint8)
+        frame[4:8, 5:15] += signal
+        meter = make_meter(StubCamera([frame]))  # no dark reference at all
+        meter.open()
+
+        self.assertFalse(meter.dark_reference_available)
+        # the pedestal is gone and what is left is the spot, as a measured dark would have left
+        self.assertAlmostEqual(meter.fetch_power(), float(4 * 10 * signal), places=6)
+        statistics = meter.last_frame_statistics
+        self.assertEqual('frame median', statistics['background source'])
+        self.assertEqual(float(pedestal), statistics['background counts per pixel'])
+
+    def test_measured_dark_is_preferred_over_the_estimate(self):
+        pedestal, signal = 30, 5
+        camera = StubCamera([np.full((16, 20), pedestal, dtype=np.uint8)])
+        self._capture_dark(camera)
+        camera.frames = [np.full((16, 20), pedestal + signal, dtype=np.uint8)]
+
+        meter = make_meter(camera)
+        meter.open()
+        self.assertTrue(meter.dark_reference_available)
+        # a frame filled edge to edge with signal: the estimate would have called all of it
+        # background and returned nothing, the measured dark gets it right
+        self.assertAlmostEqual(meter.fetch_power(), float(16 * 20 * signal), places=6)
+        self.assertEqual('dark reference', meter.last_frame_statistics['background source'])
+
+    def test_stale_dark_reference_is_ignored_rather_than_refusing_to_open(self):
+        camera = StubCamera([np.full((16, 20), 30, dtype=np.uint8)])
+        self._capture_dark(camera)
+        # the exposure moves, which is what invalidates a stored dark - and what used to make the
+        # instrument unopenable until someone blocked the beam and captured a new one
+        camera.exposure_time = camera.exposure_time * 4.0
+
+        meter = make_meter(camera)
+        meter.open()
+        self.assertFalse(meter.dark_reference_available)
+        self.assertAlmostEqual(meter.fetch_power(), 0.0, places=6)  # frame is all pedestal
+
+        strict = make_meter(camera, require_dark_reference=True)
+        with self.assertRaises(InstrumentException):
+            strict.open()
 
     def test_dark_reference_mismatches_are_all_reported_together(self):
         camera = StubCamera([np.full((16, 20), 10, dtype=np.uint8)],
@@ -438,21 +511,20 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         self.assertEqual(camera.snap_count, 1)
 
     def test_frames_per_sample_averages(self):
-        camera = StubCamera([np.full((8, 8), 4, dtype=np.uint8),
-                             np.full((8, 8), 8, dtype=np.uint8)])
+        camera = StubCamera([spot_frame((8, 8), 4), spot_frame((8, 8), 8)])
         meter = make_meter(camera, frames_per_sample=2)
         meter.open()
-        self.assertAlmostEqual(meter.fetch_power(), (4 * 64 + 8 * 64) / 2.0, places=6)
+        self.assertAlmostEqual(meter.fetch_power(), (4 * 16 + 8 * 16) / 2.0, places=6)
 
     def test_streaming_camera_is_read_rather_than_refused(self):
         """A running live view must not block a measurement; its stream is read instead."""
-        camera = StubCamera([np.full((16, 20), 3, dtype=np.uint8)])
+        camera = StubCamera([spot_frame((16, 20), 3)])
         meter = make_meter(camera)
         meter.open()
 
         camera.is_streaming = True
-        camera.frame_after(0.05, np.full((16, 20), 5, dtype=np.uint8))
-        self.assertAlmostEqual(meter.fetch_power(), 5.0 * 16 * 20, places=6)
+        camera.frame_after(0.05, spot_frame((16, 20), 5))
+        self.assertAlmostEqual(meter.fetch_power(), 5.0 * 16, places=6)
         self.assertEqual(camera.snap_count, 0, "should not have opened a second acquisition")
 
     def test_streamed_frames_must_be_newer_than_the_request(self):
@@ -463,9 +535,9 @@ class PowerMeterCameraAlviumTest(unittest.TestCase):
         camera.is_streaming = True
 
         # a frame that predates the request must be ignored in favour of the next one
-        camera.frame_slot.put(np.full((16, 20), 9, dtype=np.uint8))    # stale
-        camera.frame_after(0.05, np.full((16, 20), 4, dtype=np.uint8))  # arrives after the call
-        self.assertAlmostEqual(meter.fetch_power(), 4.0 * 16 * 20, places=6)
+        camera.frame_slot.put(spot_frame((16, 20), 9))    # stale
+        camera.frame_after(0.05, spot_frame((16, 20), 4))  # arrives after the call
+        self.assertAlmostEqual(meter.fetch_power(), 4.0 * 16, places=6)
 
     def test_streaming_timeout_raises_a_clear_error(self):
         camera = StubCamera([np.zeros((16, 20), dtype=np.uint8)], timeout_ms=200)

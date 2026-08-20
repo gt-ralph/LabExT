@@ -292,16 +292,24 @@ class CameraViewWindow(Toplevel):
         """
         dark = self._integration_dark_reference
         if dark is not None and dark.shape != frame.shape:
-            # a changed pixel format or camera ROI invalidates it; the instrument refuses outright
+            # a changed pixel format or camera ROI invalidates it; the instrument ignores it too
             dark = None
 
-        whole = PowerMeterCameraAlvium.integrate_patch(frame, dark_patch=dark)
+        # Without a dark reference the instrument estimates the background from the frame, so this
+        # does the same. The promise of this readout is that it is the number a search acts on.
+        background = None if dark is not None else PowerMeterCameraAlvium.estimate_background(frame)
+
+        def integrate(patch, dark_patch):
+            total = PowerMeterCameraAlvium.integrate_patch(patch, dark_patch=dark_patch)
+            return total if background is None else total - background * float(patch.size)
+
+        whole = integrate(frame, dark)
 
         x, y, width, height = self._read_integration_roi()
         if width and height and x + width <= frame.shape[1] and y + height <= frame.shape[0]:
             patch = frame[y:y + height, x:x + width]
             dark_patch = None if dark is None else dark[y:y + height, x:x + width]
-            roi_total = PowerMeterCameraAlvium.integrate_patch(patch, dark_patch=dark_patch)
+            roi_total = integrate(patch, dark_patch)
             roi_label = "{:.4g}".format(roi_total)
             roi_db = "{:.1f}".format(PowerMeterCameraAlvium.counts_to_db(roi_total))
         else:
@@ -314,10 +322,8 @@ class CameraViewWindow(Toplevel):
         self._integration_readout_vars['Frame'][1].set(
             "{:.1f}".format(PowerMeterCameraAlvium.counts_to_db(whole)))
 
-        if dark is None:
-            self._integration_readout_note_var.set(
-                "No dark reference applied, so these include the sensor background.")
-            return
+        baseline = ("Dark reference subtracted" if dark is not None else
+                    "Background estimated at {:.1f} counts/px from this frame".format(background))
 
         # How much of what the ROI sums is actually signal. This is what predicts search contrast,
         # unlike the ROI's share of the frame, which is low for a good tight ROI and reads as a
@@ -329,7 +335,7 @@ class CameraViewWindow(Toplevel):
             raw = float(np.asarray(frame).sum(dtype=np.float64))
         ratio = (roi_total / raw * 100.0) if raw else 0.0
 
-        note = "Dark reference subtracted. {:.0f}% of what the ROI sums is signal".format(ratio)
+        note = "{:s}. {:.0f}% of what the ROI sums is signal".format(baseline, ratio)
         if ratio < 50.0:
             note += " - the ROI is loose, so a search will see little contrast. Try Fit to spot."
         else:

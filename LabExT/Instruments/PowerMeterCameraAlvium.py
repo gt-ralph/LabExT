@@ -62,8 +62,8 @@ class PowerMeterCameraAlvium(Instrument):
 
     #### what the reading means
 
-    The value is the sum of the counts in the integration ROI, with a reference dark frame
-    subtracted. That sum is proportional to the optical power falling in the ROI, but it is in
+    The value is the sum of the counts in the integration ROI, with the sensor's background
+    removed. That sum is proportional to the optical power falling in the ROI, but it is in
     camera counts, not watts: it is only meaningful relative to other readings taken with the same
     exposure, gain and pixel format. This is exactly what a peak search needs, since it only ever
     compares readings to each other.
@@ -72,14 +72,30 @@ class PowerMeterCameraAlvium(Instrument):
     intensity profile of a beam is Gaussian in linear units, which is the shape the Search for Peak
     fits.
 
-    #### dark reference
+    #### background
 
-    A dark frame captured with the beam blocked is subtracted from every frame. Without it the
-    sensor's own offset dominates the sum and swamps the changes the search is trying to follow.
-    Capture one with the button in the Camera View, or with `capture_dark_reference()`.
+    The sensor's own pedestal has to come off the sum, or it dominates it and swamps the changes a
+    search follows: at 15 counts/px it is 289k counts inside a 138x138 region on this setup, which
+    leaves less than the 10% contrast a search asks for once the signal is about 26 dB below best
+    coupling - and 20M counts if the region is the whole frame, which does the same within 9 dB.
 
-    The dark frame is only valid for the exposure, gain, pixel format and camera ROI it was taken
-    at, so `open()` refuses to run if any of those have moved since. Recapture after changing them.
+    It is removed one of two ways. By default the background is the **median of each frame**, which
+    ignores the beam and any hot pixel, needs nothing captured or stored, and follows the exposure
+    and gain wherever they go. If a **dark reference** has been captured with the beam blocked - the
+    button in the Camera View, or `capture_dark_reference()` - that is used instead, per pixel,
+    which also removes fixed-pattern noise.
+
+    The estimate is the looser of the two: the dark's mean sits a few tenths of a count above its
+    median, and a beam with a broad halo lifts the frame median by a count or two more. Both are
+    common offsets across a scan, so they cost a search a little contrast and leave the peak where
+    it is. Neither is good enough to call a reading absolute - `CameraSnapshot` takes its own dark
+    frames per exposure for that.
+
+    A dark reference is only valid for the exposure, gain, pixel format and camera ROI it was taken
+    at. One that no longer matches is ignored with a warning, and the frame median takes over,
+    rather than the instrument refusing to open - being unable to change the exposure without
+    recapturing a dark first is a worse trap than a slightly looser background. Pass
+    `require_dark_reference` to get the refusal back.
 
     #### constructor keyword arguments
 
@@ -100,8 +116,8 @@ class PowerMeterCameraAlvium(Instrument):
       own averaging over time, so leave this at 1 unless you want averaging elsewhere too.
     * `saturation_fraction_limit` (float): fraction of ROI pixels at full scale which counts as
       saturated, default 1e-4. Reading a saturated spot raises.
-    * `require_dark_reference` (bool): default True. Set false to run without one, which logs a
-      warning and skips the subtraction.
+    * `require_dark_reference` (bool): default False, so a missing or stale dark reference falls
+      back to the per-frame estimate. Set true to refuse to open without a matching measured dark.
     * `dark_reference_file` (str): file name in the LabExT settings directory, default
       `camera_dark_reference.npy`.
     * `clip_negative` (bool): default False. See `_integrate` for why clipping is the wrong default.
@@ -158,7 +174,9 @@ class PowerMeterCameraAlvium(Instrument):
         self._frames_per_sample = max(1, int(self._kwargs.get('frames_per_sample', 1)))
         self._saturation_fraction_limit = float(
             self._kwargs.get('saturation_fraction_limit', DEFAULT_SATURATION_FRACTION_LIMIT))
-        self._require_dark_reference = bool(self._kwargs.get('require_dark_reference', True))
+        # Default False: a missing or stale dark no longer stops a search, because the background
+        # is estimated from each frame instead. Set it true to insist on a measured dark.
+        self._require_dark_reference = bool(self._kwargs.get('require_dark_reference', False))
         self._dark_reference_file = str(
             self._kwargs.get('dark_reference_file', self.DEFAULT_DARK_REFERENCE_FILE))
         self._clip_negative = bool(self._kwargs.get('clip_negative', False))
@@ -243,9 +261,10 @@ class PowerMeterCameraAlvium(Instrument):
         self.load_dark_reference()
 
         self.logger.info(
-            "Camera-backed power meter ready on %s: integration ROI %s, unit %s, dark reference %s.",
-            self._camera.idn(), self.roi, self._merit_unit,
-            "loaded" if self._dark_reference is not None else "none")
+            "Camera-backed power meter ready on %s: integration ROI %s, unit %s, background from "
+            "%s.", self._camera.idn(), self.roi, self._merit_unit,
+            "a measured dark reference" if self._dark_reference is not None
+            else "the median of each frame")
 
     def close(self):
         """Release the pending frames, and the camera unless it is being kept open."""
@@ -561,13 +580,16 @@ class PowerMeterCameraAlvium(Instrument):
         if not os.path.isfile(image_path):
             self._dark_reference = None
             self._dark_metadata = {}
-            message = ("No dark reference found at {:s}. Readings will include the sensor's own "
-                       "background, which can be far larger than the signal.".format(image_path))
+            message = "No dark reference found at {:s}.".format(image_path)
             if self._require_dark_reference:
                 raise InstrumentException(
                     message + " Capture one with the beam blocked using the Camera View, or set "
-                    '"require_dark_reference": false to run without it.')
-            self.logger.warning(message)
+                    '"require_dark_reference": false to estimate the background from each frame '
+                    "instead.")
+            self.logger.info(
+                "%s Estimating the background from each frame instead, which is what a search "
+                "needs: it compares readings to each other, so what matters is that the pedestal "
+                "is gone, not that it was measured to the last tenth of a count.", message)
             return
 
         dark = np.load(image_path).astype(np.float64)
@@ -611,7 +633,17 @@ class PowerMeterCameraAlvium(Instrument):
                             + ("those keys" if len(forced) > 1 else "that key")
                             + " from its args in instruments.config so it uses the camera as you "
                             "have it set up, or set the Camera View to match before capturing.")
-            raise InstrumentException(message)
+            if self._require_dark_reference:
+                raise InstrumentException(message)
+            # A stale dark is worse than none - it would subtract the wrong pedestal from every
+            # reading - but refusing to open over it is worse still: it blocks a search that the
+            # per-frame estimate can run perfectly well, and it is the failure that turns any
+            # exposure change into a dead instrument.
+            self._dark_reference = None
+            self._dark_metadata = {}
+            self.logger.warning(
+                "%s Ignoring it and estimating the background from each frame instead.", message)
+            return
 
         self._dark_reference = dark
         self._dark_metadata = metadata
@@ -731,6 +763,34 @@ class PowerMeterCameraAlvium(Instrument):
                 "full sensor.".format(x, y, w, h, width, height))
         return x, y, w, h
 
+    #: Stride for the background estimate. Every 4th pixel in each axis is a sixteenth of the
+    #: frame, still tens of thousands of samples - far more than a median needs - and it turns a
+    #: median over a megapixel into well under a millisecond, which matters because this runs on
+    #: every frame of a scan rather than once.
+    BACKGROUND_SAMPLE_STRIDE = 4
+
+    @classmethod
+    def estimate_background(cls, image):
+        """Background counts per pixel, estimated from the frame itself. Never raises.
+
+        The median, not the mean: it ignores the beam and any hot pixel, which is what makes it
+        usable without blocking the beam, without a stored file, and without going stale when the
+        exposure or the gain changes.
+
+        It is not as good as a measured dark. The dark's mean sits above its median by a few tenths
+        of a count - 0.195, 0.914 and 0.839 counts/px at three exposures on this setup - and a
+        beam with a broad halo lifts the frame median by a count or two more. Both are common
+        offsets across a scan, so for a search, which only compares readings to each other, they
+        cost a little contrast and leave the peak where it is. They are not good enough to call a
+        reading absolute, which is why `CameraSnapshot` takes real dark frames instead.
+
+        It also assumes the beam is a minority of the frame, which is what a spot on a sensor is. A
+        frame filled edge to edge with light has no background to find, and this returns the signal
+        level itself - only a measured dark can do anything with that.
+        """
+        sample = np.asarray(image)[::cls.BACKGROUND_SAMPLE_STRIDE, ::cls.BACKGROUND_SAMPLE_STRIDE]
+        return float(np.median(sample))
+
     @staticmethod
     def integrate_patch(patch, dark_patch=None, clip_negative=False):
         """Sum a region's counts, with the dark reference removed. Never raises.
@@ -779,17 +839,32 @@ class PowerMeterCameraAlvium(Instrument):
                 "capture a new dark reference.".format(
                     saturated, patch.size, fraction, level, self.pixel_format))
 
-        total = self.integrate_patch(
-            patch,
-            dark_patch=None if self._dark_reference is None
-            else self._dark_reference[y:y + h, x:x + w],
-            clip_negative=self._clip_negative)
+        if self._dark_reference is not None:
+            background = None
+            total = self.integrate_patch(
+                patch,
+                dark_patch=self._dark_reference[y:y + h, x:x + w],
+                clip_negative=self._clip_negative)
+        else:
+            # No measured dark, so the frame estimates its own background rather than the reading
+            # carrying the sensor's pedestal. Unsubtracted, that pedestal is what leaves a search
+            # too little contrast to resolve: at 15 counts/px it is 289k counts inside a 138x138
+            # region on this setup, which swamps the signal about 26 dB below best coupling, and
+            # 20M counts if the region is the whole frame, which swamps it within 9 dB.
+            background = self.estimate_background(image)
+            total = self.integrate_patch(patch) - background * float(patch.size)
+            if self._clip_negative:
+                # per total rather than per pixel: a scalar background has no per-pixel values to
+                # clip against, and the sum is what a reading is
+                total = max(total, 0.0)
 
         self._last_statistics = {
             'roi sum': total,
             'roi max': float(patch.max()),
             'saturated fraction': fraction,
             'roi': [x, y, w, h],
+            'background source': 'dark reference' if background is None else 'frame median',
+            'background counts per pixel': background,
         }
         return total
 
