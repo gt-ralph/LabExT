@@ -69,7 +69,7 @@ class PowerMeterKoheronPD10R(Instrument):
     def ready_check_async(self):
         return True
 
-    def check_instrument_errors(self):
+    def check_instrument_errors(self, context=None):
         return None
 
     def command(self, *args, **kwargs):

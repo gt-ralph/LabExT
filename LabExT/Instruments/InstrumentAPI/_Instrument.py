@@ -306,12 +306,17 @@ class Instrument(object):
             return False
 
     @assert_instrument_connected
-    def check_instrument_errors(self):
+    def check_instrument_errors(self, context=None):
         """Checks the internal error queue of the instrument.
 
         This form of error checking should work for all instruments adhering to the SCPI
         standard (notably all Agilent / Keysight ones). If it does not work for your instrument,
         don't hesitate to implement a working version.
+
+        Arguments:
+            context (str): the command or request that was just sent, named in the exception.
+                A bare SCPI error code says what went wrong but not to what, and the queue is
+                only read after the fact, so without this the caller has to guess.
 
         Raises:
             InstrumentException: if the instrument reports an error
@@ -328,7 +333,8 @@ class Instrument(object):
                 # the error queue is empty as soon as we read a 0 from it
                 break
         if errors:
-            raise InstrumentException("Error queue reports these errors: " + str(errors))
+            after = f" after {context!r}" if context else ""
+            raise InstrumentException(f"Error queue reports these errors{after}: {errors}")
 
     #
     # functions for I/O to and from instrument
@@ -346,7 +352,7 @@ class Instrument(object):
         self.write(command_str)  # send the command
         self.ready_check_sync()  # wait until instrument signalled completion
 
-        self.check_instrument_errors()  # make sure there was no error
+        self.check_instrument_errors(context=command_str)  # make sure there was no error
 
     def command_channel(self, subsystem_str, command_str):
         """High-level shortcut function to send a command to a channel in a multi-channeled instrument.
@@ -376,7 +382,7 @@ class Instrument(object):
             str: the answer from the instrument
         """
         ans = self.query(request_str)
-        self.check_instrument_errors()
+        self.check_instrument_errors(context=request_str)
         return ans
 
     def request_channel(self, subsystem_str, request_str):

@@ -5,6 +5,7 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
+import logging
 import threading
 
 from labjack import ljm
@@ -14,6 +15,7 @@ import numpy as np
 
 class LabJack:
     def __init__(self):
+        self.logger = logging.getLogger()
         self.open()
 
     def open(self):
@@ -73,7 +75,19 @@ class LabJack:
         self.configure_device_for_triggered_stream()
         self.configure_ljm_for_triggered_stream()
 
+    def stop_stream(self):
+        """Stops the stream if one is running. Safe to call when none is."""
+        try:
+            ljm.eStreamStop(self.handle)
+        except ljm.LJMError as err:
+            if err.errorCode != ljm.errorcodes.STREAM_NOT_RUNNING:
+                raise
+
     def start_stream(self, scans_per_read, nc, a_scan_list, scan_rate):
+        # a stream left running by an earlier measurement that raised before stopping it
+        # makes every later one fail with STREAM_IS_ACTIVE, which reads like a wiring fault
+        # rather than leftover state, so clear it here instead of requiring a replug
+        self.stop_stream()
         return ljm.eStreamStart(self.handle, scans_per_read, nc, a_scan_list, scan_rate)
 
     def make_scan_list(self, nc, channels):
@@ -113,9 +127,28 @@ class LabJack:
     def start_logging(self, max_requests, scans_per_read, new_scan_rate, channels:list, nc: int, vector_length):
         global_data = []
 
+        try:
+            self._read_stream_into(global_data, max_requests, scans_per_read,
+                                   new_scan_rate, channels, nc)
+        finally:
+            # stop the stream whatever happened, so a failure here cannot stop the next
+            # measurement from ever starting one
+            try:
+                self.stop_stream()
+            except Exception:
+                self.logger.exception("could not stop the LabJack stream")
+
+        global_data = np.atleast_2d(np.concatenate(global_data)).T
+        # throw away garbage data
+        global_data = global_data[:, 0:vector_length]
+
+        return global_data
+
+    def _read_stream_into(self, global_data, max_requests, scans_per_read, new_scan_rate,
+                          channels, nc):
+        """Reads `max_requests` blocks off the running stream, appending each to global_data."""
         totScans = 0
         totSkip = 0  # Total skipped samples
-
         i = 1
         ljmScanBacklog = 0
 
@@ -154,16 +187,6 @@ class LabJack:
                 else:
                     raise err
 
-        try:
-            # if self.verbose:
-            #     print("\nStop Stream")
-            ljm.eStreamStop(self.handle)
-        except ljm.LJMError:
-            ljme = sys.exc_info()[1]
-            print(ljme)
-        except Exception:
-            e = sys.exc_info()[1]
-            print(e)
 
         global_data = np.atleast_2d(np.concatenate(global_data)).T
         # throw away garbage data

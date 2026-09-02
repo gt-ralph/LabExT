@@ -101,7 +101,18 @@ class LaserMainframeKeysight(Instrument):
 
     def __exit__(self, exc_type, exc_value, traceback):
         """ counterpart to the __enter__() function """
-        self.enable = False
+        try:
+            self.enable = False
+        except Exception as exc:
+            # Switching the output off reads the laser's error queue, and the laser posts
+            # sweep failures to it asynchronously - so this can raise over an error caused by
+            # something else entirely. Letting that escape replaces the exception already on
+            # its way out and hides the real failure, so only report it.
+            if exc_type is None:
+                raise
+            self.logger.error(
+                "could not switch the laser off while handling %s (%s): %s",
+                exc_type.__name__, exc_value, exc)
 
     #
     #   mainframe options
