@@ -44,6 +44,11 @@ class LUNA_sweep_Oband(Measurement):
         DUT_L = parameters.get('DUT L').value
         meas_type = parameters.get('Measurement Type').value
 
+        # write the measurement parameters into the measurement settings, so a saved trace
+        # records the settings it was taken with
+        for pname, pparam in parameters.items():
+            data['measurement settings'][pname] = pparam.as_dict()
+
         self.logger.debug("Starting Luna sweep measurement")
 
         

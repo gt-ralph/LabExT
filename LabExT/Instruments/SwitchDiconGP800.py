@@ -57,15 +57,58 @@ class SwitchDiconGP800(Instrument):
         self._idn = self.session.get((f"{self.uri_prefix}/system/network-info/hostname")).text
         return f"Switch {self._idn}"
     
-    def connect(self, port_tuples:list[tuple]):
+    def gp_command(self, command: str) -> str:
+        """Sends one GP800 command and returns the instrument's reply.
+
+        A successful POST only means the command reached the controller. The GP800 reports a
+        command it could not parse in the reply body, so that has to be checked separately -
+        otherwise a malformed command silently leaves the switch in its previous routing.
+        """
+        response = self.session.post(self.GP_COMMAND_ENDPOINT, json=command)
+        if not response.ok:
+            raise InstrumentException(
+                f"GP800 request failed for {command!r}: HTTP {response.status_code} {response.text}"
+            )
+        reply = response.text.strip()
+        # the GP800 answers a command it did not understand with an error string rather than
+        # an HTTP failure, so treat anything that mentions an error as a rejected command
+        if "error" in reply.lower() or reply.startswith("?"):
+            raise InstrumentException(f"GP800 rejected {command!r}: {reply}")
+        return reply
+
+    def connect(self, port_tuples: list[tuple]) -> str:
         """
         expecting a list of tuples (M, N) each mapping the M port to an N port
+
+        Each crosspoint is set with its own `X1 CH <M> <N>` command. The GP800 takes one M/N
+        pair per command, so the whole mapping cannot be passed as a pair of lists - doing
+        that sends the Python list repr, which the switch rejects without changing anything.
+
+        Returns the raw routing readback, so callers can record what the switch actually did.
         """
-        # 
-        connection_response = self.session.post(self.GP_COMMAND_ENDPOINT, json=f"X1 CH {[p[0] for p in port_tuples]} {[p[1] for p in port_tuples]}")
-        if not connection_response.ok:
-            raise RuntimeError("Failed to make connections.")
-        return 
+        for m_port, n_port in port_tuples:
+            self.gp_command(f"X1 CH {int(m_port)} {int(n_port)}")
+
+        # the readback is for the record only, so a GP800 that does not answer this query
+        # must not take a measurement down with it - the set commands above are the ones
+        # allowed to fail loudly
+        try:
+            readback = self.get_connections()
+        except InstrumentException as exc:
+            self.logger.warning("could not read switch routing back: %s", exc)
+            readback = f"unavailable: {exc}"
+
+        self.logger.debug("switch routing set to %s, readback: %s", port_tuples, readback)
+        return readback
+
+    def get_connections(self) -> str:
+        """Reads the switch's current M -> N routing back, as the GP800's raw reply.
+
+        Returned unparsed on purpose: the reply layout varies between GP800 module types, and
+        a wrong guess at it would either abort good measurements or hide a real mismatch. The
+        string is short and is stored verbatim in the measurement file for later auditing.
+        """
+        return self.gp_command("X1 CH?")
 
     def close(self):
         self.session.close()

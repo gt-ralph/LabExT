@@ -46,14 +46,19 @@ class LUNA_sweep_Cband_switch(Measurement):
         self.switch = instruments["Switch"] 
         self.switch.open()
         print("Switch connected")
-        self.switch.connect([(1, self.parameters['Switch Port: M = 1'].value), (2, self.parameters['Switch Port: M = 2'].value), (3, self.parameters['Switch Port: M = 3'].value), (4, self.parameters['Switch Port: M = 4'].value)])
-        print("Switch channels set to: M1 = {}, M2 = {}, M3 = {}, M4 = {}".format(
-            self.parameters['Switch Port: M = 1'].value,
-            self.parameters['Switch Port: M = 2'].value,
-            self.parameters['Switch Port: M = 3'].value,
-            self.parameters['Switch Port: M = 4'].value
-        ))
+        routing = [(m, parameters.get('Switch Port: M = %d' % m).value) for m in (1, 2, 3, 4)]
+        switch_readback = self.switch.connect(routing)
+        print("Switch channels set to: " + ", ".join("M%d = %d" % mn for mn in routing))
+        print("Switch reports: {}".format(switch_readback))
         self.switch.close()
+
+        # the routing decides which device the OVA actually sees, so a trace cannot be
+        # attributed to a device without it - record both what was asked for and what the
+        # switch reported back
+        data['measurement settings']['switch routing requested'] = {
+            'M%d' % m: n for m, n in routing
+        }
+        data['measurement settings']['switch routing readback'] = switch_readback
 
         center_wavelength = parameters.get('center wavelength').value
         wl_range = parameters.get('wavelength range').value
@@ -65,10 +70,15 @@ class LUNA_sweep_Cband_switch(Measurement):
         enable_averaging = parameters.get('enable averaging').value
         num_averages = max(1, int(parameters.get('number of averages').value))
 
-        os.remove(filepath)  # Remove the file after reading if not needed anymore
+        # write the measurement parameters into the measurement settings, so a saved trace
+        # records the settings it was taken with
+        for pname, pparam in parameters.items():
+            data['measurement settings'][pname] = pparam.as_dict()
 
-        with open(filepath, 'w') as f:
-            pass  # No content is written, resulting in an empty file
+        if save_all_data:
+            # the scan below is polled for a non-zero file size, so start from an empty file
+            os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+            open(filepath, 'w').close()
 
         self.logger.debug("Starting Luna sweep measurement")
         print("Starting Luna sweep measurement")

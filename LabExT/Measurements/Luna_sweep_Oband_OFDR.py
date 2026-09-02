@@ -44,6 +44,11 @@ class LUNA_sweep_Oband_OFDR(Measurement):
         end_DUT_L = parameters.get('End DUT L').value
         step_DUT_L = parameters.get('Step DUT L').value
         group_index = parameters.get('Group Index').value
+
+        # write the measurement parameters into the measurement settings, so a saved trace
+        # records the settings it was taken with
+        for pname, pparam in parameters.items():
+            data['measurement settings'][pname] = pparam.as_dict()
         meas_type = "Reflection"
 
         self.logger.debug("Starting Luna sweep measurement")

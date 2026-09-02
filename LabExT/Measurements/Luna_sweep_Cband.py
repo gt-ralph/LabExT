@@ -41,7 +41,15 @@ class LUNA_sweep_Cband(Measurement):
         filepath = parameters.get('filepath').value
         DUT_L = parameters.get('DUT L').value
 
+        # write the measurement parameters into the measurement settings, so a saved trace
+        # records the settings it was taken with
+        for pname, pparam in parameters.items():
+            data['measurement settings'][pname] = pparam.as_dict()
+
         self.logger.debug("Starting Luna sweep measurement")
+
+        if save_all_data:
+            os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
 
         result, new_dut_L = self.ova.grab_data(
             dut_L = DUT_L,
@@ -115,6 +123,8 @@ class LUNA_sweep_Cband(Measurement):
                 data['values']['wavelength [nm]'] = result[0, 0, :].tolist()
                 data['values']['transmission (dB)'] = result[0, 1, :].tolist()
         
-        os.remove(filepath)  # Remove the file after reading if not needed anymore
+        if save_all_data:
+            # only the save_all_data path writes the scratch file, so only it has one to clean up
+            os.remove(filepath)
 
         return data
