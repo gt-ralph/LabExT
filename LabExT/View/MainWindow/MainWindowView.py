@@ -57,6 +57,7 @@ class MainWindowContextMenu(Menu):
 
         self._file.add_command(label="Load Data", command=self._menu_listener.client_load_data)
         self._file.add_command(label="Import Chip", command=self._menu_listener.client_import_chip)
+        self._file.add_command(label="Load Experiment Queue...", command=self._menu_listener.client_load_queue)
         self._file.add_command(label="Export Data", command=self._menu_listener.client_export_data)
         self._file.add_command(label="Restart", command=self._menu_listener.client_restart)
         self._file.add_command(label="Quit", command=self._menu_listener.client_quit)

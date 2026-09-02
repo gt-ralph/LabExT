@@ -363,6 +363,8 @@ class MainWindowController:
         if selected_todo_idx is not None and selected_todo_idx < len(self.experiment_manager.exp.to_do_list):
             # get measurement to edit
             selected_todo = self.experiment_manager.exp.to_do_list[selected_todo_idx]
+            if not self._assert_todo_is_measurement(selected_todo, "editing"):
+                return
             dev_list = [selected_todo.device]
             edit_meas_list = [selected_todo.measurement]
             # run SettingsWindow
@@ -392,6 +394,22 @@ class MainWindowController:
             self.logger.warning(msg)
             messagebox.showwarning("No ToDo Selected", msg)
 
+    def _assert_todo_is_measurement(self, entry, action: str) -> bool:
+        """Warns and returns False if the selected queue entry is an alignment step, not a measurement.
+
+        Loaded experiment queues contain explicit move/search-for-peak entries, which have no
+        measurement to edit, clone or open a side window for.
+        """
+        if entry.measurement is not None:
+            return True
+        msg = (
+            f"The selected queue entry ({str(entry)}) is an alignment step, not a measurement, "
+            f"and does not support {action}."
+        )
+        self.logger.warning(msg)
+        messagebox.showwarning("Not a Measurement", msg)
+        return False
+
     def todo_clone(self):
         """
         Called on user click on "Clone To Do"
@@ -400,6 +418,8 @@ class MainWindowController:
         if selected_todo_idx is not None and selected_todo_idx < len(self.experiment_manager.exp.to_do_list):
             # get measurement to duplicate
             selected_todo = self.experiment_manager.exp.to_do_list[selected_todo_idx]
+            if not self._assert_todo_is_measurement(selected_todo, "cloning"):
+                return
             sel_device, sel_meas = selected_todo.device, selected_todo.measurement
 
             new_meas = self.experiment_manager.exp.duplicate_measurement(sel_meas)
@@ -426,14 +446,11 @@ class MainWindowController:
         if selected_todo_idx is not None and selected_todo_idx < len(self.experiment_manager.exp.to_do_list):
             # delete the to do from the to do list
             selected_todo = self.experiment_manager.exp.to_do_list.pop(selected_todo_idx)
-            dev_to_del, meas_to_del = selected_todo.device, selected_todo.measurement
 
             # tell GUI to update the table contents
             self.update_tables()
             self.logger.info(
-                "Deleted ToDo with measurement id {:s} and device id {:s} at list index {:d}.".format(
-                    meas_to_del.get_name_with_id(), str(dev_to_del.id), selected_todo_idx
-                )
+                "Deleted queue entry {:s} at list index {:d}.".format(str(selected_todo), selected_todo_idx)
             )
         else:
             msg = "No ToDo selected for deleting. Click on the row in the ToDo Queue which you want to delete."
@@ -450,6 +467,8 @@ class MainWindowController:
         selected_todo_idx = self.view.frame.to_do_table.get_selected_todo_index()
         if selected_todo_idx is not None and selected_todo_idx < len(self.experiment_manager.exp.to_do_list):
             sel_todo = self.experiment_manager.exp.to_do_list[selected_todo_idx]
+            if not self._assert_todo_is_measurement(sel_todo, "opening a side window"):
+                return
             sel_device = sel_todo.device
             sel_meas = sel_todo.measurement
             sel_meas.open_side_windows()

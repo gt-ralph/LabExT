@@ -147,8 +147,7 @@ class ToDoTable(CustomFrame):
                 continue
 
             # case: new item added to original list and not yet in displayed list
-            dev, measurement = todo.device, todo.measurement
-            todo_values = (tidx, dev.id, dev.type, measurement.get_name_with_id())
+            todo_values = (tidx,) + todo.display_columns()
 
             self._tree.insert(parent="", index=tidx, iid=todo_hash, values=todo_values)
 

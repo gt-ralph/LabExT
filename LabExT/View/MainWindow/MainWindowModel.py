@@ -164,14 +164,15 @@ class MainWindowModel:
         self.experiment_manager.exp.exctrl_enable_sfp = self.var_sfp_ena.get()
         self.experiment_manager.exp.exctrl_refine_calibration_with_sfp = self.var_refine_calib.get()
 
-        # refining the calibration only makes sense if a search for peak actually runs
-        if not self.var_sfp_ena.get():
-            if self.var_refine_calib.get():
-                self.var_refine_calib.set(False)
-            self.var_refine_calib_reason.set("Requires Search-for-Peak enabled")
-            self.view.frame.control_panel.exctrl_refine_calib.config(state='disabled')
-        else:
-            self.var_refine_calib_reason.set("")
+        # Refining the calibration only makes sense if a search for peak actually runs, but
+        # that is no longer only the global pre-measurement search: a loaded experiment queue
+        # carries its own explicit sfp steps, and those refine the calibration too. So this
+        # stays available with the global search switched off, as long as a peak searcher
+        # exists. When none is initialised, submodule_status_updated() disables it instead.
+        if self.status_sfp_initialized.get():
+            self.var_refine_calib_reason.set(
+                "" if self.var_sfp_ena.get() else "Applies to queued Search-for-Peak steps"
+            )
             self.view.frame.control_panel.exctrl_refine_calib.config(state='normal')
 
         # allow wait time changes only if manual mode is not activated

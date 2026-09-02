@@ -1,0 +1,140 @@
+{
+  "labext_queue_version": 1,
+  "chip_name": "MyChip",
+  "entries": [
+    {
+      "type": "move",
+      "device_id": "1042"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "1042",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 2,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 1
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "1043",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "1044",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "2001"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "2001",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "2002",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 6
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "2003",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.79",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 7
+      }
+    }
+  ]
+}

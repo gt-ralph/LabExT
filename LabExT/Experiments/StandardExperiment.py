@@ -21,6 +21,7 @@ from tkinter import Tk, messagebox
 from typing import TYPE_CHECKING, Type, List, Tuple, Union
 
 from LabExT.Experiments.AutosaveDict import AutosaveDict
+from LabExT.Experiments.ToDo import MoveEntry, SfpEntry
 from LabExT.Measurements.MeasAPI.Measurement import Measurement
 from LabExT.Movement.MoverNew import MoverNew
 from LabExT.Movement.config import CoordinateSystem
@@ -114,6 +115,13 @@ class StandardExperiment:
         self.exctrl_refine_calibration_with_sfp = False
         self.exctrl_inter_measurement_wait_time = 0.0
 
+        # result of the most recent queued SfpEntry, copied into every measurement that runs
+        # after it so each measurement record still carries the alignment it was taken under
+        self._last_queued_sfp_result = None
+        # device the most recent queued MoveEntry moved to, used to attribute a following
+        # sfp step to a device when the queue does not name one on the sfp entry itself
+        self._last_queued_move_device = None
+
         # data structures for FINISHED measurements
         self.measurements: ObservableList[MeasurementDict] = ObservableList()
         self.measurements_hashes = []
@@ -154,6 +162,9 @@ class StandardExperiment:
         """
         instr_addrs_in_todo_queue = set()
         for todo in self.to_do_list:
+            # alignment-only entries (move/sfp) carry no measurement and no instruments
+            if todo.measurement is None:
+                continue
             for v in todo.measurement.selected_instruments.values():
                 instr_addrs_in_todo_queue.add(v["visa"])
         instr_active_in_lv = set()
@@ -200,6 +211,19 @@ class StandardExperiment:
         # we iterate over every measurement of every device in the To Do Queue
         while 0 < len(self.to_do_list):
             current_todo = self.to_do_list[0]
+
+            # explicit alignment steps (from a loaded experiment queue) are executed and popped
+            # here; everything below this point handles measurement entries only
+            if isinstance(current_todo, (MoveEntry, SfpEntry)):
+                if not self._execute_alignment_entry(current_todo):
+                    break
+                self.update()
+                if not self.to_do_list:
+                    self.show_meas_finished_infobox()
+                    self.logger.info("Experiment and hereby all measurements finished.")
+                    return
+                continue
+
             device = current_todo.device
             measurement = current_todo.measurement
 
@@ -268,13 +292,14 @@ class StandardExperiment:
 
             data["finished"] = False
 
-            # only move if automatic movement is enabled
-            if self.exctrl_auto_move_stages:
+            # only move if automatic movement is enabled; entries from a loaded queue set
+            # auto_align=False because they carry their own explicit move/sfp steps
+            if self.exctrl_auto_move_stages and current_todo.auto_align:
                 self._mover.move_to_device(self._chip, device)
                 self.logger.info("Automatically moved to device:" + str(device))
 
             # execute automatic search for peak
-            if self.exctrl_enable_sfp:
+            if self.exctrl_enable_sfp and current_todo.auto_align:
                 self._peak_searcher.update_params_from_savefile()
                 data["search for peak"] = self._peak_searcher.search_for_peak()
                 self.logger.info("Search for peak done.")
@@ -285,7 +310,9 @@ class StandardExperiment:
                         device, data["search for peak"]
                     )
             else:
-                data["search for peak"] = None
+                # a queued SfpEntry earlier in this block already aligned the stages, so record
+                # its result here to keep per-measurement alignment provenance
+                data["search for peak"] = self._last_queued_sfp_result
                 self.logger.debug("Search for peak not enabled. Not executing automatic search for peak.")
 
             self.logger.info("Executing measurement %s on device %s.", measurement.get_name_with_id(), device)
@@ -399,6 +426,78 @@ class StandardExperiment:
             if self.exctrl_inter_measurement_wait_time > 0.0:
                 self.logger.info(f"Waiting {self.exctrl_inter_measurement_wait_time:.0f}s before continuing...")
                 time.sleep(self.exctrl_inter_measurement_wait_time)
+
+    def _execute_alignment_entry(self, entry) -> bool:
+        """Executes one explicit alignment step from a loaded experiment queue.
+
+        Alignment steps produce no measurement record - `load_measurement_dataset` requires a
+        device and a non-empty values dict, which a move or a search for peak does not have. A
+        queued search for peak instead writes its own standalone result file and is additionally
+        copied into every measurement that follows it, so provenance survives in both places.
+
+        Args:
+            entry: A `MoveEntry` or `SfpEntry`.
+
+        Returns:
+            True if the step succeeded and was popped off the queue, False if it failed (the
+            entry stays in the queue and the experiment pauses, mirroring measurement errors).
+        """
+        try:
+            if isinstance(entry, MoveEntry):
+                self._mover.move_to_device(self._chip, entry.device)
+                # moving invalidates the previous alignment, so measurements after this move
+                # must not inherit the search-for-peak result recorded before it
+                self._last_queued_sfp_result = None
+                # remember where we are, so a following sfp step knows which device it
+                # aligned on even when the queue does not name one explicitly
+                self._last_queued_move_device = entry.device
+                self.logger.info("Queued move to device: %s", entry.device)
+            else:
+                self._peak_searcher.update_params_from_savefile()
+                sfp_results = self._peak_searcher.search_for_peak()
+                self._last_queued_sfp_result = sfp_results
+                self.logger.info("Queued search for peak done.")
+
+                # the device this alignment belongs to: named on the entry if the queue said
+                # so, otherwise the one the preceding move step put us on
+                aligned_device = entry.device or self._last_queued_move_device
+
+                ts = str("{date:%Y-%m-%d_%H%M%S}".format(date=datetime.datetime.now()))
+                sfp_file_path = self.uniquify_safe_file_name(
+                    join(self.param_output_path, make_filename_compliant(f"{self.param_chip_name}_sfp_{ts}"))
+                )
+                sfp_data = self._write_metadata(file_path=sfp_file_path + ".json")
+                if aligned_device is not None:
+                    sfp_data["device"] = aligned_device.as_dict()
+                sfp_data["timestamp"] = ts
+                sfp_data["search for peak"] = sfp_results
+
+                # feed the fine-aligned position back into the stage calibration
+                if self.exctrl_refine_calibration_with_sfp:
+                    if aligned_device is None:
+                        self.logger.warning(
+                            "Not refining calibration from queued search for peak: no device is "
+                            "associated with it. Add a device_id to the sfp entry, or precede it "
+                            "with a move entry."
+                        )
+                    else:
+                        sfp_data["calibration refinement"] = self._refine_calibration_from_sfp(
+                            aligned_device, sfp_results
+                        )
+
+                sfp_data.save(indented=self._meas_control_settings.json_indented)
+                sfp_data.auto_save = False
+                self.logger.info("Saved queued search for peak results to %s", sfp_data.file_path)
+        except Exception as exc:
+            # same handling as a failed measurement: pause and leave the entry in the queue
+            self._experiment_manager.main_window.model.var_mm_pause.set(True)
+            msg = f"Error occurred during queued {entry.entry_type} step: " + repr(exc)
+            messagebox.showinfo("Experiment Queue Error", msg)
+            self.logger.exception(msg)
+            return False
+
+        self.to_do_list.pop(0)
+        return True
 
     def _refine_calibration_from_sfp(self, device: Device, sfp_results: dict) -> dict:
         """Feeds a completed search-for-peak result back into the stage calibration.

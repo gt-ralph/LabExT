@@ -15,6 +15,8 @@ from threading import Thread
 from tkinter import filedialog, messagebox, Toplevel, Label, Frame, font
 from typing import TYPE_CHECKING
 
+from LabExT.Experiments.QueueLoader import load_queue_file
+from LabExT.Experiments.ToDo import SfpEntry
 from LabExT.Utils import get_author_list, try_to_lift_window
 from LabExT.View.AddonSettingsDialog import AddonSettingsDialog
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
@@ -140,6 +142,52 @@ class MListener:
 
         self.logger.info(f"Finished data import of files: {loaded_files}")
         self.import_done = True
+
+    def client_load_queue(self):
+        """Called when user wants to load an externally authored (e.g. notebook-generated) experiment queue."""
+        if not self._experiment_manager.chip:
+            messagebox.showinfo(
+                title="No Chip Loaded",
+                message="An experiment queue references devices by id. "
+                "Please make sure you import a chip first.",
+            )
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Select experiment queue file",
+            filetypes=((".json queue", "*.json"), ("all files", "*.*")),
+        )
+        if not file_path:
+            self.logger.debug("Aborting experiment queue import. No file selected.")
+            return
+
+        try:
+            entries = load_queue_file(file_path, self._experiment_manager)
+        except Exception as exc:
+            msg = f"Could not load experiment queue {file_path}:\n\n{exc}"
+            self.logger.error(msg)
+            messagebox.showerror(title="Load Queue Error", message=msg)
+            return
+
+        self._experiment_manager.exp.to_do_list.extend(entries)
+        self._experiment_manager.exp.update()
+        self.logger.info(f"Appended {len(entries)} queue entries from {file_path} to the ToDo queue.")
+
+        # A queued Search-for-Peak runs the PeakSearcher directly, which needs its instruments
+        # allocated first. Say so now rather than letting the run die on the first sfp step,
+        # after the stages have already moved. Only a warning: instruments can still be
+        # allocated between loading the queue and pressing Run.
+        peak_searcher = getattr(self._experiment_manager, "peak_searcher", None)
+        if any(isinstance(entry, SfpEntry) for entry in entries) and not (
+            peak_searcher is not None and peak_searcher.initialized
+        ):
+            messagebox.showinfo(
+                title="Search for Peak not initialised",
+                message="This queue contains Search-for-Peak steps, but the Peak Searcher has no "
+                "instruments allocated yet, so those steps would fail.\n\n"
+                "Open Peak Searcher (Ctrl+S) and press '1. Allocate Instruments' before running.\n\n"
+                "The queue itself loaded fine.",
+            )
 
     def client_import_chip(self):
 

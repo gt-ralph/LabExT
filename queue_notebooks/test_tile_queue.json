@@ -1,0 +1,528 @@
+{
+  "labext_queue_version": 1,
+  "chip_name": "test_tile_markers",
+  "entries": [
+    {
+      "type": "move",
+      "device_id": "4310"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4310",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4520",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4680",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 6
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4760",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 7
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "4240"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4240",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4311",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4500",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4601",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 6
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "4202"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4202",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4312",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4514",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4641",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 6
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "4161"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4161",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 2,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 1
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4281",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4321",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4517",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "4203"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4203",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4313",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4515",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4642",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 6
+      }
+    },
+    {
+      "type": "move",
+      "device_id": "4162"
+    },
+    {
+      "type": "sfp"
+    },
+    {
+      "type": "meas",
+      "device_id": "4162",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 2,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 1
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4282",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 3,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 2
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4322",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 3
+      }
+    },
+    {
+      "type": "meas",
+      "device_id": "4516",
+      "measurement": "LUNA_sweep_Cband_switch",
+      "parameters": {
+        "center wavelength": 1566.72,
+        "wavelength range": "85.78",
+        "Measurement Type": "Transmission",
+        "Plot Measurement Type": "MIN_MAX_LOSS",
+        "DUT L": 0.0,
+        "enable averaging": true,
+        "number of averages": 10,
+        "save_all_data": false,
+        "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
+        "Switch Port: M = 3": 4,
+        "Switch Port: M = 4": 5
+      }
+    }
+  ]
+}
