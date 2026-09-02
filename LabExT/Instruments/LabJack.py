@@ -193,9 +193,3 @@ class LabJack:
                 else:
                     raise err
 
-
-        global_data = np.atleast_2d(np.concatenate(global_data)).T
-        # throw away garbage data
-        global_data = global_data[:, 0:vector_length]
-
-        return global_data
