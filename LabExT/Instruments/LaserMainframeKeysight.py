@@ -151,6 +151,10 @@ class LaserMainframeKeysight(Instrument):
     #
     def triggered_sweep_wl_setup(self, start_nm, stop_nm, step_pm, sweep_speed_nm_per_s=5, nbr_cycles=1):
         self.command('trig0:outp SWST')
+        # the sweep waits for the software trigger sent by triggered_sweep_wl_start. Setting
+        # this explicitly matters: without it the mode is whatever the last sweep setup left
+        # behind, and a sweep left waiting on a trigger that never arrives simply sits still.
+        self.command_channel('trig', ':inp sws')
         # self.command('sour:chan:wav:swe:llog 0')
         self.command_channel('sour', ':wav:swe:mode cont')
         self.command_channel('sour', ':wav:swe:star ' + str(start_nm) + 'nm')
@@ -259,10 +263,26 @@ class LaserMainframeKeysight(Instrument):
         raise NotImplementedError
 
     def triggered_sweep_wl_start(self):
+        """Arms the sweep and releases it with the software trigger.
+
+        `:wav:swe 1` only arms - the sweep then waits for its input trigger. Without the
+        software trigger below the wavelength never moves, so the laser emits no step
+        triggers and anything recording off them waits forever on a stream that never starts.
+        """
         if not self.sweep_configured:
             raise InstrumentException("Cannot start sweep if sweep parameters were not configured yet.")
         self.command_channel("sour", ":wav:swe 1")
-        
+        start_time = time.time()
+        while time.time() - start_time < (self._net_timeout_ms / 1000):
+            flag = int(self.query_channel("sour", ":wav:swe:flag?"))
+            # wait until flag is uneven (see p169 of 8163 programming manual)
+            if flag % 2 == 1:
+                break
+        else:
+            raise InstrumentException("Sweep function never waited for trigger within set network timeout.")
+        # start sweep by sending software trigger
+        self.command_channel("sour", ":wav:swe:soft")
+
     def sweep_wl_start(self):
         """
         Starts the sweeping function immediately.
