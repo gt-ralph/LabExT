@@ -105,6 +105,11 @@ class IL_sweep(Measurement):
         with self.instr_laser:
             self.instr_laser.triggered_sweep_wl_start()
             power_data = self.lj.start_logging(MAX_REQUESTS, scans_per_read, new_scan_rate, channels, nc, vector_length)
+            # the LabJack stops after the scans it was asked for, which lands before the
+            # laser has finished sweeping. Leaving this block switches the output off, and
+            # the laser rejects that mid-sweep, so let the sweep finish first. `speed` is
+            # the sweep duration in seconds.
+            self.instr_laser.wait_for_sweep_done(timeout_s=speed + 30)
 
         self.logger.info("Downloading wavelength data from laser.")
         # used_n_samples = self.instr_laser.sweep_wl_get_n_points()

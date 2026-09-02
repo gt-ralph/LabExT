@@ -324,6 +324,23 @@ class LaserMainframeKeysight(Instrument):
         else:
             return True  # otherwise
 
+    def wait_for_sweep_done(self, timeout_s):
+        """Blocks until the sweep has finished, for at most `timeout_s` seconds.
+
+        A sweep runs on the instrument's own clock, so whatever is recording it can finish
+        ahead of it - a data logger stops after the samples it was asked for. The laser
+        rejects commands that change the output state while a sweep is in progress, so
+        anything that switches the laser off afterwards has to wait here first.
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_s:
+            if not self.sweep_wl_busy():
+                return
+            time.sleep(0.05)
+        raise InstrumentException(
+            f"Sweep was still running {timeout_s:.1f}s after the recording finished."
+        )
+
     def sweep_wl_get_data(self, trigger_cleanup=True, **kwargs):
         """
         Reads the wavelengths vector generated during the sweep. Only really useful if used with sending
