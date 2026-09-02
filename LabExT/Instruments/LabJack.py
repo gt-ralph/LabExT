@@ -13,6 +13,12 @@ import time
 import sys
 import numpy as np
 
+# LJM reports "no stream is running" under two different codes: 1303 from the library and
+# 2620 from the T-series device itself. Only the first has a name in ljm.errorcodes, and a
+# stop on an idle device raises the second, so both have to count as "nothing to stop".
+STREAM_NOT_RUNNING_CODES = (ljm.errorcodes.STREAM_NOT_RUNNING, 2620)
+
+
 class LabJack:
     def __init__(self):
         self.logger = logging.getLogger()
@@ -80,7 +86,7 @@ class LabJack:
         try:
             ljm.eStreamStop(self.handle)
         except ljm.LJMError as err:
-            if err.errorCode != ljm.errorcodes.STREAM_NOT_RUNNING:
+            if err.errorCode not in STREAM_NOT_RUNNING_CODES:
                 raise
 
     def start_stream(self, scans_per_read, nc, a_scan_list, scan_rate):
