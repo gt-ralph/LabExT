@@ -33,6 +33,72 @@
       "type": "meas",
       "device_id": "4310",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -72,6 +138,72 @@
       "type": "meas",
       "device_id": "4520",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -111,6 +243,72 @@
       "type": "meas",
       "device_id": "4680",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -150,6 +348,72 @@
       "type": "meas",
       "device_id": "4760",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -196,6 +460,72 @@
       "type": "meas",
       "device_id": "4240",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -235,6 +565,72 @@
       "type": "meas",
       "device_id": "4311",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -274,6 +670,72 @@
       "type": "meas",
       "device_id": "4500",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -313,6 +775,72 @@
       "type": "meas",
       "device_id": "4601",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -359,6 +887,72 @@
       "type": "meas",
       "device_id": "4202",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -398,6 +992,72 @@
       "type": "meas",
       "device_id": "4312",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -437,6 +1097,72 @@
       "type": "meas",
       "device_id": "4514",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -476,6 +1202,72 @@
       "type": "meas",
       "device_id": "4641",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -522,6 +1314,72 @@
       "type": "meas",
       "device_id": "4161",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -561,6 +1419,72 @@
       "type": "meas",
       "device_id": "4281",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -600,6 +1524,72 @@
       "type": "meas",
       "device_id": "4321",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -639,6 +1629,72 @@
       "type": "meas",
       "device_id": "4517",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -685,6 +1741,72 @@
       "type": "meas",
       "device_id": "4203",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -724,6 +1846,72 @@
       "type": "meas",
       "device_id": "4313",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -763,6 +1951,72 @@
       "type": "meas",
       "device_id": "4515",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -802,6 +2056,72 @@
       "type": "meas",
       "device_id": "4642",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -848,6 +2168,72 @@
       "type": "meas",
       "device_id": "4162",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -887,6 +2273,72 @@
       "type": "meas",
       "device_id": "4282",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -926,6 +2378,72 @@
       "type": "meas",
       "device_id": "4322",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
@@ -965,6 +2483,72 @@
       "type": "meas",
       "device_id": "4516",
       "measurement": "IL_sweep_switch",
+      "instruments": {
+        "Laser": {
+          "visa": "GPIB0::23::INSTR",
+          "class": "LaserMainframeKeysight",
+          "channel": 0
+        },
+        "Switch": {
+          "visa": "None",
+          "class": "SwitchDiconGP800",
+          "channel": 0,
+          "args": {
+            "hostname": "gp800-ea6a",
+            "port": 22,
+            "username": "gp800admin",
+            "password": "gp800admin"
+          }
+        },
+        "Power Meter 0": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 0,
+          "args": {
+            "lj_port": "AIN0"
+          }
+        },
+        "Power Meter 1": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 1,
+          "args": {
+            "lj_port": "AIN1"
+          }
+        },
+        "Power Meter 2": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 2,
+          "args": {
+            "lj_port": "AIN2"
+          }
+        },
+        "Power Meter 3": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 4": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        },
+        "Power Meter 5": {
+          "visa": "None",
+          "class": "PowerMeterKoheronPD10R",
+          "channel": 3,
+          "args": {
+            "lj_port": "AIN3"
+          }
+        }
+      },
       "parameters": {
         "wavelength start": 1530.0,
         "wavelength stop": 1570.0,
