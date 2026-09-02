@@ -26,7 +26,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -46,7 +46,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     },
     {
@@ -64,9 +64,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 2,
+        "Switch Port: M = 2": 3,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 6
+        "Switch Port: M = 4": 2
       }
     },
     {
@@ -83,10 +83,10 @@
         "number of averages": 10,
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
-        "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 2,
+        "Switch Port: M = 1": 2,
+        "Switch Port: M = 2": 3,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 7
+        "Switch Port: M = 4": 1
       }
     },
     {
@@ -111,9 +111,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 2
+        "Switch Port: M = 4": 6
       }
     },
     {
@@ -133,7 +133,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -153,7 +153,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     },
     {
@@ -171,9 +171,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 2,
+        "Switch Port: M = 2": 3,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 6
+        "Switch Port: M = 4": 2
       }
     },
     {
@@ -198,9 +198,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 2
+        "Switch Port: M = 4": 6
       }
     },
     {
@@ -220,7 +220,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -240,7 +240,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     },
     {
@@ -258,9 +258,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 2,
+        "Switch Port: M = 2": 3,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 6
+        "Switch Port: M = 4": 2
       }
     },
     {
@@ -284,10 +284,10 @@
         "number of averages": 10,
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
-        "Switch Port: M = 1": 2,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 1
+        "Switch Port: M = 4": 7
       }
     },
     {
@@ -305,9 +305,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 2
+        "Switch Port: M = 4": 6
       }
     },
     {
@@ -327,7 +327,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -347,7 +347,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     },
     {
@@ -372,9 +372,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 2
+        "Switch Port: M = 4": 6
       }
     },
     {
@@ -394,7 +394,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -414,7 +414,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     },
     {
@@ -432,9 +432,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 2,
+        "Switch Port: M = 2": 3,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 6
+        "Switch Port: M = 4": 2
       }
     },
     {
@@ -458,10 +458,10 @@
         "number of averages": 10,
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
-        "Switch Port: M = 1": 2,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 1": 1,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 1
+        "Switch Port: M = 4": 7
       }
     },
     {
@@ -479,9 +479,9 @@
         "save_all_data": false,
         "filepath": "C:\\Users\\Luna\\Documents\\test.txt",
         "Switch Port: M = 1": 1,
-        "Switch Port: M = 2": 3,
+        "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 2
+        "Switch Port: M = 4": 6
       }
     },
     {
@@ -501,7 +501,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 3
+        "Switch Port: M = 4": 5
       }
     },
     {
@@ -521,7 +521,7 @@
         "Switch Port: M = 1": 1,
         "Switch Port: M = 2": 2,
         "Switch Port: M = 3": 4,
-        "Switch Port: M = 4": 5
+        "Switch Port: M = 4": 3
       }
     }
   ]
