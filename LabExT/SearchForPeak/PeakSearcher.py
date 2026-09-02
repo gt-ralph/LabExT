@@ -39,7 +39,7 @@ class PeakSearcher(Measurement):
     """
     ## Search for Peak
 
-    Executes a Search for Peak for a standard IL measurement with one or two stages (left and right) and only x and y coordinates.
+    Executes a Search for Peak for a standard IL measurement with one or two stages (in any combination of the Left/Right/Top/Bottom orientations - at most two stages can ever be configured at once) and only x and y coordinates.
     This class does not implement the standard `Measurement.algorithm()` interface (it raises `NotImplementedError`), so it
     cannot be selected as a regular sweep-able measurement in the measurement wizard. It is instead used directly via
     `search_for_peak()` - either manually from the Search-for-Peak window, or automatically as a pre-measurement alignment
@@ -50,8 +50,8 @@ class PeakSearcher(Measurement):
     value at each measured point is the maximum reading across whichever power meters are configured). The optical fibers
     carrying said signal are mounted onto remotely controllable stages (in our case SmarAct Piezo Stages, or Thorlabs
     K-Cube stages). In this routine, these stages mechanically sweep over a given range, the insertion loss is measured in
-    regular intervals. The sweep is conducted for each stage axis separately (Left X, Left Y, Right X, Right Y, or just X, Y
-    for a single-stage setup).
+    regular intervals. The sweep is conducted for each stage axis separately (e.g. Left X, Left Y, Right X, Right Y for a
+    Left+Right setup, or just X, Y for a single-stage setup regardless of its orientation).
 
     The Search for Peak measurement routine relies on the assumption that around the transmission maximum of a grating coupler, the transmission forms a 2D gaussian (w.r.t x and y position).
     Thus after having collected data for each axis, a 1D gaussian is fitted to the data and the stages are moved to the maximum of the gaussian.
@@ -86,7 +86,15 @@ class PeakSearcher(Measurement):
 
     #### Switch Parameters
     - **Switch Flag**: whether to connect and use the optical switch before searching.
-    - **M = 1** / **M = 2** / **M = 3** / **M = 4**: logical switch port routed to Power Meter 1/2/3/4 respectively (only used if `Switch Flag` is enabled).
+    - **M = 1** / **M = 2** / **M = 3** / **M = 4**: logical switch port routed to Power Meter 1/2/3/4 respectively for switch
+      State A (only used if `Switch Flag` is enabled).
+    - **Switch Dual-State Flag**: if enabled (requires `Switch Flag`), at every single scan point during the search the
+      switch is connected to State A, all power meters are read, then connected to State B (`State B: M = 1..4`) and read
+      again; whichever state gave the higher reading per meter is used as that meter's value for the point, and the switch
+      is left connected to whichever state produced the overall highest reading. If disabled, only State A is used
+      (unchanged behaviour: switch is connected once before the search and never touched again).
+    - **State B: M = 1** / **State B: M = 2** / **State B: M = 3** / **State B: M = 4**: logical switch port routed to Power
+      Meter 1/2/3/4 respectively for switch State B (only used if `Switch Dual-State Flag` is enabled).
 
     #### Stage Parameters (per pass - First/Second/Third Peak Search)
     - **Enable/Disable**: whether this pass runs at all.
@@ -105,9 +113,18 @@ class PeakSearcher(Measurement):
     - **Tolerance**: maximum acceptable position error (commanded vs. actual) for a pass, in [um].
     """
 
-    DIMENSION_NAMES_TWO_STAGES = ['Left X', 'Left Y', 'Right X', 'Right Y']
+    # dimension names for a lone active stage stay orientation-agnostic (matches
+    # historical behaviour); with two active stages (any two of LEFT/RIGHT/TOP/BOTTOM -
+    # at most two can ever be configured at once, see MoverNew.calibrations) each pair
+    # of dimensions is labelled with that stage's actual orientation instead of
+    # assuming Left/Right
     DIMENSION_NAMES_SINGLE_STAGE = ['X', 'Y']
     PASS_NAMES = ['First', 'Second', 'Third']
+    # canonical ordering used to sort active calibrations deterministically - NOT the
+    # same as Orientation's own .value (BaseEnum._generate_next_value_ makes .value
+    # the member's name string, e.g. 'LEFT', so sorting by .value would come out
+    # alphabetically as Bottom/Left/Right/Top instead of this intended order)
+    ORIENTATION_ORDER = ('LEFT', 'RIGHT', 'TOP', 'BOTTOM')
 
     def __init__(
         self,
@@ -263,6 +280,41 @@ class PeakSearcher(Measurement):
                 break
         return [float(np.mean(sample_list)) for sample_list in samples]
 
+    def _connect_switch_state(self, state: str) -> None:
+        """
+        Connects the switch to logical-port mapping 'A' (params 'M = 1'..'M = 4')
+        or 'B' (params 'State B: M = 1'..'State B: M = 4').
+        """
+        prefix = '' if state == 'A' else 'State B: '
+        self.instr_switch.connect([
+            (m, self.parameters[f'{prefix}M = {m}'].value) for m in range(1, 5)
+        ])
+
+    def _read_averaged_power_dual_switch_state(self, averaging_time_s: float) -> list:
+        """
+        Dual-switch-state variant of _read_averaged_power(), used when 'Switch Dual-
+        State Flag' is enabled. At the current stage position, reads all four power
+        meters with the switch connected to State A, then again with the switch
+        connected to State B, and returns the per-meter maximum of the two readings -
+        this feeds into the exact same 'loss = max(p1..p4)' merit calculation used
+        for the single-state case, just informed by whichever switch state was better
+        at each individual point instead of a single state fixed for the whole search.
+
+        Leaves the switch connected to whichever state produced the overall highest
+        reading (across all meters), so the physical light path always ends each check
+        routed through the just-determined better state.
+        """
+        self._connect_switch_state('A')
+        powers_a = self._read_averaged_power(averaging_time_s)
+
+        self._connect_switch_state('B')
+        powers_b = self._read_averaged_power(averaging_time_s)
+
+        if max(powers_a) >= max(powers_b):
+            self._connect_switch_state('A')
+
+        return [max(a, b) for a, b in zip(powers_a, powers_b)]
+
     @staticmethod
     def get_default_parameter():
         params = {
@@ -271,6 +323,11 @@ class PeakSearcher(Measurement):
             'M = 2': MeasParamInt(value=2, unit='N Port'),
             'M = 3': MeasParamInt(value=3, unit='N Port'),
             'M = 4': MeasParamInt(value=4, unit='N Port'),
+            'Switch Dual-State Flag': MeasParamBool(value=False),
+            'State B: M = 1': MeasParamInt(value=1, unit='N Port'),
+            'State B: M = 2': MeasParamInt(value=2, unit='N Port'),
+            'State B: M = 3': MeasParamInt(value=3, unit='N Port'),
+            'State B: M = 4': MeasParamInt(value=4, unit='N Port'),
             'Laser wavelength': MeasParamInt(value=1550, unit='nm'),
             'Laser power': MeasParamFloat(value=0.0, unit='dBm'),
             'Power Meter range': MeasParamFloat(value=0.0, unit='dBm'),
@@ -305,14 +362,12 @@ class PeakSearcher(Measurement):
             and gaussian fitting information.
         """
         # double check if mover is actually enabled
-        if self.mover.left_calibration is None and self.mover.right_calibration is None:
+        search_calibrations = self._get_ordered_calibrations()
+        if not search_calibrations:
             raise RuntimeError(
-                "The Search for Peak requires at least one left or right stage configured.")
+                "The Search for Peak requires at least one stage configured.")
 
-        if self.mover.left_calibration and self.mover.right_calibration:
-            self._dimension_names = self.DIMENSION_NAMES_TWO_STAGES
-        else:
-            self._dimension_names = self.DIMENSION_NAMES_SINGLE_STAGE
+        self._dimension_names = self._get_dimension_names(search_calibrations)
 
         # load laser and powermeter
         self.instr_powermeter1 = self.get_instrument('Power Meter 1')
@@ -333,6 +388,8 @@ class PeakSearcher(Measurement):
             raise RuntimeError('Search for Peak Power Meter 4 not yet defined!')
         if self.instr_laser is None:
             raise RuntimeError('Search for Peak Laser not yet defined!')
+        if self.parameters['Switch Dual-State Flag'].value and not self.parameters['Switch Flag'].value:
+            raise RuntimeError('Search for Peak Switch Dual-State Flag requires Switch Flag to also be enabled!')
 
         # initialize plotting
         self.plots_left.clear()
@@ -350,6 +407,15 @@ class PeakSearcher(Measurement):
                 raise RuntimeError('Search for Peak Switch not yet defined!')
             self.instr_switch.open()
             self.instr_switch.connect([(1, self.parameters['M = 1'].value), (2, self.parameters['M = 2'].value), (3, self.parameters['M = 3'].value), (4, self.parameters['M = 4'].value)])
+
+        # dual-switch-state search checks both configured switch states at every scan
+        # point and keeps the max per meter; otherwise the switch (if any) stays fixed
+        # in State A for the whole search, exactly as before this feature existed
+        read_power = (
+            self._read_averaged_power_dual_switch_state
+            if self.parameters['Switch Dual-State Flag'].value
+            else self._read_averaged_power
+        )
 
         self.logger.debug('Executing Search for Peak with the following parameters: {:s}'.format(
             "\n".join([str(name) + " = " + str(param.value) + " " + str(param.unit) for name, param in
@@ -412,15 +478,7 @@ class PeakSearcher(Measurement):
 
                     # find the current positions of the stages as starting point for
                     # SFP
-                    _left_start_coordinates = []
-                    _right_start_coordinates = []
-                    if self.mover.left_calibration:
-                        _left_start_coordinates = self.mover.left_calibration.get_position().to_list()[
-                            :2]
-                    if self.mover.right_calibration:
-                        _right_start_coordinates = self.mover.right_calibration.get_position().to_list()[
-                            :2]
-                    start_coordinates = _left_start_coordinates + _right_start_coordinates
+                    start_coordinates = self._get_current_coordinates()
                     current_coordinates = start_coordinates.copy()
 
                     self.logger.debug(f"Start Position: {start_coordinates}")
@@ -429,7 +487,7 @@ class PeakSearcher(Measurement):
 
                     # get start statistics
                     results['start location'] = start_coordinates.copy()
-                    results['start through power'] = max(self._read_averaged_power(power_averaging_time_s))
+                    results['start through power'] = max(read_power(power_averaging_time_s))
 
                     # do sweep for every dimension
                     # color cycle strings for matplotlib
@@ -489,7 +547,7 @@ class PeakSearcher(Measurement):
 
                             # take IL measurement, averaged over power_averaging_time_s
                             # to reduce point-to-point noise in the scan trace
-                            p1, p2, p3, p4 = self._read_averaged_power(power_averaging_time_s)
+                            p1, p2, p3, p4 = read_power(power_averaging_time_s)
                             loss = max(p1, p2, p3, p4)
 
                             # save data
@@ -620,7 +678,7 @@ class PeakSearcher(Measurement):
 
                         # verify the move with a real measurement rather than trusting
                         # the fit's prediction, and flag a net-negative outcome
-                        verified_through_power = max(self._read_averaged_power(power_averaging_time_s))
+                        verified_through_power = max(read_power(power_averaging_time_s))
                         results['fitting information'][dimension_name]['verified through power'] = verified_through_power
                         results['fitting information'][dimension_name]['verification passed'] = bool(
                             verified_through_power >= results['start through power'])
@@ -683,38 +741,57 @@ class PeakSearcher(Measurement):
 
         return results
 
+    def _get_ordered_calibrations(self) -> list:
+        """
+        Returns the currently configured stage calibrations - at most two, since
+        MoverNew only ever allows one calibration per DevicePort (see
+        MoverNew.calibrations / add_stage_calibration) - ordered deterministically by
+        Orientation (Left, Right, Top, Bottom) regardless of assignment order, so
+        coordinate lists and dimension names stay consistent across calls. Works for
+        any combination of the 4 orientations, not just Left/Right.
+        """
+        ordered = sorted(
+            self.mover.calibrations.items(),
+            key=lambda kv: self.ORIENTATION_ORDER.index(kv[0][0].name)
+        )
+        return [calibration for _, calibration in ordered]
+
+    def _get_dimension_names(self, calibrations: list) -> list:
+        """
+        ['X', 'Y'] for a single active stage (orientation-agnostic, matching prior
+        single-stage behaviour), or one '<Orientation> X' / '<Orientation> Y' pair per
+        active stage (e.g. 'Top X', 'Top Y', 'Bottom X', 'Bottom Y') when two stages
+        are configured, using their actual orientations instead of assuming Left/Right.
+        """
+        if len(calibrations) == 1:
+            return self.DIMENSION_NAMES_SINGLE_STAGE
+        names = []
+        for calibration in calibrations:
+            label = calibration.orientation.name.title()
+            names += [f'{label} X', f'{label} Y']
+        return names
+
     def _move_stages_absolute(self, coordinates: list):
         with self.mover.set_stages_coordinate_system(CoordinateSystem.STAGE):
-            if self.mover.left_calibration and self.mover.right_calibration:
-                leftz = self.mover.left_calibration.get_position().z
-                rightz = self.mover.right_calibration.get_position().z
-                assert len(coordinates) == 4
-                self.mover.left_calibration.move_absolute(
-                    StageCoordinate.from_list(coordinates[:2] + [leftz]))
-                self.mover.right_calibration.move_absolute(
-                    StageCoordinate.from_list(coordinates[2:] + [rightz]))
-            elif self.mover.left_calibration:
-                leftz = self.mover.left_calibration.get_position().z
-                assert len(coordinates) == 2
-                self.mover.left_calibration.move_absolute(
-                    StageCoordinate.from_list(coordinates + [leftz]))
-            elif self.mover.right_calibration:
-                rightz = self.mover.right_calibration.get_position().z
-                assert len(coordinates) == 2
-                self.mover.right_calibration.move_absolute(
-                    StageCoordinate.from_list(coordinates + [rightz]))
-            else:
-                raise RuntimeError()
+            calibrations = self._get_ordered_calibrations()
+            if not calibrations:
+                raise RuntimeError("No stage configured.")
+            assert len(coordinates) == 2 * len(calibrations)
+            for idx, calibration in enumerate(calibrations):
+                z = calibration.get_position().z
+                calibration.move_absolute(
+                    StageCoordinate.from_list(coordinates[2 * idx: 2 * idx + 2] + [z]))
 
     def _get_current_coordinates(self) -> list:
         """
-        Returns the current [Left X, Left Y, Right X, Right Y] (or [X, Y] for a
-        single-stage setup) stage coordinates, in the same ordering/slicing used
-        throughout search_for_peak().
+        Returns the current stage coordinates across all active stages (2 values per
+        stage), in the same ordering/slicing used throughout search_for_peak() (see
+        _get_ordered_calibrations for the ordering).
         """
-        _left = self.mover.left_calibration.get_position().to_list()[:2] if self.mover.left_calibration else []
-        _right = self.mover.right_calibration.get_position().to_list()[:2] if self.mover.right_calibration else []
-        return _left + _right
+        coordinates = []
+        for calibration in self._get_ordered_calibrations():
+            coordinates += calibration.get_position().to_list()[:2]
+        return coordinates
 
     def test_backlash(self) -> dict:
         """
@@ -735,18 +812,15 @@ class PeakSearcher(Measurement):
         dict
             Per-axis-name -> {'max_error_um': float, 'passed': bool}
         """
-        if self.mover.left_calibration is None and self.mover.right_calibration is None:
-            raise RuntimeError("Backlash test requires at least one left or right stage configured.")
+        backlash_calibrations = self._get_ordered_calibrations()
+        if not backlash_calibrations:
+            raise RuntimeError("Backlash test requires at least one stage configured.")
 
         amplitude_um = self.parameters.get('Backlash Test: Amplitude').value
         num_reversals = int(self.parameters.get('Backlash Test: Number of reversals').value)
         tolerance_um = self.parameters.get('Backlash Test: Tolerance').value
 
-        dimension_names = (
-            self.DIMENSION_NAMES_TWO_STAGES
-            if self.mover.left_calibration and self.mover.right_calibration
-            else self.DIMENSION_NAMES_SINGLE_STAGE
-        )
+        dimension_names = self._get_dimension_names(backlash_calibrations)
 
         test_results = {}
 
