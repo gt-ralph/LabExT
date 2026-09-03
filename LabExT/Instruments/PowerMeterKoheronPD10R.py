@@ -11,6 +11,24 @@ from LabExT.Instruments.LabJack import LabJack
 import threading
 
 
+# Every Koheron photodiode hangs off the one LabJack, differing only in which AIN it reads.
+# Opening a handle per power meter per measurement left a growing pile of connections to the
+# same device - nothing ever closed them - and concurrent connections to one device collide
+# on Modbus transaction ids, which surfaces as LJME_TRANSACTION_ID_ERR partway through a run
+# rather than at the start. One shared connection for the process instead.
+_shared_labjack = None
+_shared_labjack_lock = threading.Lock()
+
+
+def get_shared_labjack() -> LabJack:
+    """Returns the process-wide LabJack, opening it on first use."""
+    global _shared_labjack
+    with _shared_labjack_lock:
+        if _shared_labjack is None:
+            _shared_labjack = LabJack()
+        return _shared_labjack
+
+
 class PowerMeterKoheronPD10R(Instrument):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -23,7 +41,12 @@ class PowerMeterKoheronPD10R(Instrument):
         return self.lj
 
     def open(self):
-        self.lj = LabJack()
+        self.lj = get_shared_labjack()
+
+    def close(self):
+        # the LabJack is shared with every other power meter, so one of them finishing is
+        # not a reason to close it. It stays open for the life of the process.
+        self.lj = None
 
     def voltage_to_dBm(self, voltage):
         '''

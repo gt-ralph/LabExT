@@ -27,6 +27,7 @@ class LabJack:
     def open(self):
         self.handle = ljm.openS("ANY", "ANY", "ANY")
         self.info = ljm.getHandleInfo(self.handle)
+        self.logger.debug("opened LabJack handle %s (%s)", self.handle, self.info)
 
     def close(self):
         ljm.close(self.handle)
