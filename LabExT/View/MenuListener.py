@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox, Toplevel, Label, Frame, font
 from typing import TYPE_CHECKING
 
 from LabExT.Experiments.QueueLoader import load_queue_file
+from LabExT.Experiments.QueueSaver import save_queue_file
 from LabExT.Experiments.ToDo import SfpEntry
 from LabExT.Utils import get_author_list, try_to_lift_window
 from LabExT.View.AddonSettingsDialog import AddonSettingsDialog
@@ -187,6 +188,43 @@ class MListener:
                 "instruments allocated yet, so those steps would fail.\n\n"
                 "Open Peak Searcher (Ctrl+S) and press '1. Allocate Instruments' before running.\n\n"
                 "The queue itself loaded fine.",
+            )
+
+    def client_save_queue(self):
+        """Called when user wants to save the current ToDo queue, e.g. to survive a restart."""
+        to_do_list = self._experiment_manager.exp.to_do_list
+        if not to_do_list:
+            messagebox.showinfo(
+                title="Empty ToDo Queue",
+                message="There is nothing to save - the ToDo queue is empty.",
+            )
+            return
+
+        chip_name = getattr(self._experiment_manager.chip, "name", None) or "experiment"
+        file_path = filedialog.asksaveasfilename(
+            title="Save experiment queue as",
+            defaultextension=".json",
+            initialfile=f"{chip_name}_queue.json",
+            filetypes=((".json queue", "*.json"), ("all files", "*.*")),
+        )
+        if not file_path:
+            self.logger.debug("Aborting experiment queue export. No file selected.")
+            return
+
+        try:
+            warnings = save_queue_file(file_path, to_do_list, self._experiment_manager)
+        except Exception as exc:
+            msg = f"Could not save experiment queue {file_path}:\n\n{exc}"
+            self.logger.error(msg)
+            messagebox.showerror(title="Save Queue Error", message=msg)
+            return
+
+        self.logger.info(f"Saved {len(to_do_list)} ToDo queue entries to {file_path}.")
+
+        if warnings:
+            messagebox.showwarning(
+                title="Experiment Queue Saved",
+                message=f"Saved {len(to_do_list)} entries to {file_path}.\n\n" + "\n\n".join(warnings),
             )
 
     def client_import_chip(self):

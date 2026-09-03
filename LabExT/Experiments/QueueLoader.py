@@ -133,9 +133,17 @@ def build_entries(queue_data: dict, experiment_manager) -> List:
         elif entry_type == "meas":
             device = _resolve_device(chip, raw_entry, index, required=True)
             measurement = _build_measurement(experiment, raw_entry, index)
-            # loaded queues carry their own explicit alignment steps, so the global
-            # auto-move/auto-sfp settings must not align a second time before this
-            entries.append(ToDo(device=device, measurement=measurement, auto_align=False))
+            # a queue authored as a file carries its own explicit alignment steps, so the
+            # global auto-move/auto-sfp settings must not align a second time before this -
+            # hence the default. The key exists so that a queue saved out of the GUI, whose
+            # entries do align themselves, round-trips instead of silently losing that.
+            entries.append(
+                ToDo(
+                    device=device,
+                    measurement=measurement,
+                    auto_align=bool(raw_entry.get("auto_align", False)),
+                )
+            )
         else:
             raise QueueLoadError(f"entry {index}: unknown entry type {entry_type!r}, expected 'move', 'sfp' or 'meas'.")
 

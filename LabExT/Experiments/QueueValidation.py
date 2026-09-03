@@ -28,8 +28,14 @@ def split_into_blocks(entries: list) -> List[List[tuple]]:
     """Splits a queue into blocks of measurements delimited by alignment steps.
 
     A `MoveEntry` or `SfpEntry` closes the block before it, since the stages are
-    (re-)positioned there. Returns one list of `(queue_index, ToDo)` pairs per block;
-    blocks containing no measurements are omitted.
+    (re-)positioned there. So does a ToDo that aligns itself: `auto_align` means the global
+    auto-move/auto-sfp settings position the stages before that measurement, which is an
+    alignment step like any other, just not a separate queue entry. Without that a queue
+    built in the GUI - which carries no explicit move/sfp entries at all - would be read as
+    one block spanning every device on the chip.
+
+    Returns one list of `(queue_index, ToDo)` pairs per block; blocks containing no
+    measurements are omitted.
     """
     blocks = []
     current = []
@@ -39,6 +45,9 @@ def split_into_blocks(entries: list) -> List[List[tuple]]:
                 blocks.append(current)
                 current = []
             continue
+        if getattr(entry, "auto_align", False) and current:
+            blocks.append(current)
+            current = []
         current.append((index, entry))
     if current:
         blocks.append(current)
@@ -95,6 +104,9 @@ def validate_queue_warnings(entries: list) -> List[str]:
         if isinstance(entry, (MoveEntry, SfpEntry)):
             break
         if isinstance(entry, ToDo):
+            if getattr(entry, "auto_align", False):
+                # this one aligns itself before running, so there is nothing to warn about
+                break
             warnings.append(
                 "The queue starts with a measurement before any move/sfp step: it will run at "
                 "whatever position the stages currently hold."

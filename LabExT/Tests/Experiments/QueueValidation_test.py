@@ -20,11 +20,11 @@ from LabExT.Experiments.ToDo import MoveEntry, SfpEntry, ToDo
 from LabExT.Wafer.Device import Device
 
 
-def make_todo(device: Device) -> ToDo:
+def make_todo(device: Device, auto_align: bool = False) -> ToDo:
     """A ToDo with a stand-in measurement - the validator only looks at devices."""
     measurement = Mock()
     measurement.get_name_with_id.return_value = "MockMeas"
-    return ToDo(device=device, measurement=measurement, auto_align=False)
+    return ToDo(device=device, measurement=measurement, auto_align=auto_align)
 
 
 class InputLocationsMatchTest(unittest.TestCase):
@@ -62,6 +62,21 @@ class SplitIntoBlocksTest(unittest.TestCase):
         self.assertEqual([2, 1], [len(block) for block in blocks])
         self.assertEqual([2, 3], [index for index, _ in blocks[0]])
 
+    def test_auto_aligning_todo_starts_its_own_block(self):
+        # a GUI-built queue carries no move/sfp entries at all; each ToDo aligns itself
+        entries = [make_todo(self.device, auto_align=True), make_todo(self.device, auto_align=True)]
+        blocks = split_into_blocks(entries)
+        self.assertEqual([1, 1], [len(block) for block in blocks])
+
+    def test_auto_aligning_todo_closes_the_preceding_block(self):
+        entries = [
+            MoveEntry(self.device),
+            make_todo(self.device),
+            make_todo(self.device, auto_align=True),
+        ]
+        blocks = split_into_blocks(entries)
+        self.assertEqual([[1], [2]], [[index for index, _ in block] for block in blocks])
+
     def test_empty_queue_has_no_blocks(self):
         self.assertEqual([], split_into_blocks([]))
 
@@ -83,6 +98,14 @@ class ValidateQueueTest(unittest.TestCase):
             SfpEntry(),
             make_todo(self.device_a),
             make_todo(self.device_a_sibling),
+        ]
+        self.assertEqual([], validate_queue(entries))
+
+    def test_auto_aligning_todos_on_different_devices_pass(self):
+        # the ordinary shape of a queue built through the measurement wizards
+        entries = [
+            make_todo(self.device_a, auto_align=True),
+            make_todo(self.device_far, auto_align=True),
         ]
         self.assertEqual([], validate_queue(entries))
 
@@ -172,6 +195,11 @@ class ValidateQueueWarningsTest(unittest.TestCase):
     def test_measurement_before_first_checkpoint_warns(self):
         warnings = validate_queue_warnings([make_todo(self.device), MoveEntry(self.device)])
         self.assertEqual(1, len(warnings))
+
+    def test_queue_starting_with_auto_aligning_measurement_does_not_warn(self):
+        # it aligns itself before running, so there is no unaligned first measurement
+        warnings = validate_queue_warnings([make_todo(self.device, auto_align=True)])
+        self.assertEqual([], warnings)
 
     def test_queue_starting_with_alignment_does_not_warn(self):
         warnings = validate_queue_warnings([MoveEntry(self.device), make_todo(self.device)])
