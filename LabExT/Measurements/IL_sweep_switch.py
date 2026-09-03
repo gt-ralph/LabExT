@@ -2,6 +2,14 @@ from LabExT.Measurements.MeasAPI import *
 import time
 import numpy as np
 
+# how many times a sweep is recorded before its failure is reported. A LabJack stream can
+# fail on its first read with LJME_TRANSACTION_ID_ERR, which says the connection is out of
+# step and nothing about the device under test - so the sweep is worth taking again rather
+# than costing the queue an entry and the operator a restart. The stream fails on its first
+# read or not at all, so an attempt that gets its data has the whole trace.
+STREAM_ATTEMPTS = 3
+
+
 class IL_sweep_switch(Measurement):
     """IL_sweep with the Dicon GP800 routing the fibre array, as the Luna OVA sweeps do.
 
@@ -39,6 +47,26 @@ class IL_sweep_switch(Measurement):
     @staticmethod
     def get_wanted_instrument():
         return ['Laser', 'Switch', 'Power Meter 0', 'Power Meter 1', 'Power Meter 2', 'Power Meter 3', 'Power Meter 4', 'Power Meter 5']
+
+    def _record_with_stream_retries(self, record_sweep):
+        """Records a sweep, and records it again from the start if the LabJack stream broke.
+
+        The sweep and the recording have to start over together - a laser part way through a
+        sweep cannot be picked up - so what repeats is the whole arm-sweep-record cycle, with
+        the LabJack reset in between. Returns the data and the number of attempts it took.
+        Only the stream failures that say nothing about the sweep are retried; anything else
+        is reported the first time, as before.
+        """
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            try:
+                return record_sweep(), attempt
+            except Exception as err:
+                if attempt == STREAM_ATTEMPTS or not self.lj.is_recoverable_stream_error(err):
+                    raise
+                self.logger.warning(
+                    "The LabJack stream failed with %s. Resetting the LabJack and sweeping "
+                    "again (attempt %d of %d).", err, attempt + 1, STREAM_ATTEMPTS)
+                self.lj.reset("the stream failed with %s" % err)
 
     def algorithm(self, device, data, instruments, parameters):
         # route the fibre array before anything else, so the sweep below sees the channel
@@ -116,29 +144,38 @@ class IL_sweep_switch(Measurement):
 
         channels = [pm.lj_port for pm in self.instr_pms]
         nc = len(channels)
-        a_scan_list = self.lj.make_scan_list(nc, channels)
 
-        # init triggered stream on pm
-        self.lj.init_triggered_stream()
+        def record_sweep():
+            a_scan_list = self.lj.make_scan_list(nc, channels)
 
-        new_scan_rate = self.lj.start_stream(scans_per_read, nc, a_scan_list, scan_rate)
-        self.logger.debug(f"Stream started with a scan rate of {new_scan_rate:0.0f} Hz \n Performing {MAX_REQUESTS} stream reads.")
+            # init triggered stream on pm
+            self.lj.init_triggered_stream()
 
-        # Laser settings
-        self.instr_laser.unit = 'dBm'
-        self.instr_laser.power = laser_power
-        self.instr_laser.wavelength = center_wavelength
-        self.instr_laser.step_pm = step_pm
-        self.instr_laser.triggered_sweep_wl_setup(start_lambda, end_lambda, step_pm, sweep_speed, sweep_cycles)
+            new_scan_rate = self.lj.start_stream(scans_per_read, nc, a_scan_list, scan_rate)
+            self.logger.debug(f"Stream started with a scan rate of {new_scan_rate:0.0f} Hz \n Performing {MAX_REQUESTS} stream reads.")
 
-        with self.instr_laser:
-            self.instr_laser.triggered_sweep_wl_start()
-            power_data = self.lj.start_logging(MAX_REQUESTS, scans_per_read, new_scan_rate, channels, nc, vector_length)
-            # the LabJack stops after the scans it was asked for, which lands before the
-            # laser has finished sweeping. Leaving this block switches the output off, and
-            # the laser rejects that mid-sweep, so let the sweep finish first. `speed` is
-            # the sweep duration in seconds.
-            self.instr_laser.wait_for_sweep_done(timeout_s=speed + 30)
+            # Laser settings
+            self.instr_laser.unit = 'dBm'
+            self.instr_laser.power = laser_power
+            self.instr_laser.wavelength = center_wavelength
+            self.instr_laser.step_pm = step_pm
+            self.instr_laser.triggered_sweep_wl_setup(start_lambda, end_lambda, step_pm, sweep_speed, sweep_cycles)
+
+            with self.instr_laser:
+                self.instr_laser.triggered_sweep_wl_start()
+                power_data = self.lj.start_logging(MAX_REQUESTS, scans_per_read, new_scan_rate, channels, nc, vector_length)
+                # the LabJack stops after the scans it was asked for, which lands before the
+                # laser has finished sweeping. Leaving this block switches the output off, and
+                # the laser rejects that mid-sweep, so let the sweep finish first. `speed` is
+                # the sweep duration in seconds.
+                self.instr_laser.wait_for_sweep_done(timeout_s=speed + 30)
+
+            return power_data
+
+        power_data, attempts = self._record_with_stream_retries(record_sweep)
+        # a trace that took more than one attempt is a normal trace, but being able to
+        # tell them apart later is worth one line in the settings
+        data['measurement settings']['stream attempts'] = attempts
 
         self.logger.info("Downloading wavelength data from laser.")
 

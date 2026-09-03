@@ -58,6 +58,9 @@ class FakeLJM:
     def close(self, handle):
         self.calls.append("close %d" % handle)
 
+    def closeAll(self):
+        self.calls.append("closeAll")
+
     # registers
 
     def eWriteNames(self, handle, num_frames, names, values):
@@ -191,6 +194,45 @@ class LabJackStreamSessionTest(unittest.TestCase):
 
         with patch("LabExT.Instruments.LabJack.ljm", fake):
             labjack.stop_stream()
+
+
+@unittest.skipIf(LabJack is None, "the LJM bindings are not installed")
+class LabJackResetTest(unittest.TestCase):
+    """The reset a failed sweep asks for before it is recorded again."""
+
+    def _labjack(self):
+        fake = FakeLJM([])
+        with patch("LabExT.Instruments.LabJack.ljm", fake):
+            labjack = LabJack()
+        fake.calls.clear()
+        return labjack, fake
+
+    def test_reset_drops_every_connection_and_opens_a_new_one(self):
+        labjack, fake = self._labjack()
+
+        with patch("LabExT.Instruments.LabJack.ljm", fake),                 patch("LabExT.Instruments.LabJack.time.sleep") as settle:
+            labjack.reset("testing")
+
+        # closeAll, not close: a handle this object lost track of would keep the device busy
+        self.assertEqual(["closeAll", "openS"], fake.calls)
+        self.assertEqual(2, labjack.handle)
+        settle.assert_called_once()
+
+    def test_reset_opens_a_new_connection_even_if_closing_refused(self):
+        labjack, fake = self._labjack()
+        fake.closeAll = lambda: (_ for _ in ()).throw(FakeLJMError(1230))
+
+        with patch("LabExT.Instruments.LabJack.ljm", fake),                 patch("LabExT.Instruments.LabJack.time.sleep"):
+            labjack.reset("testing")
+
+        self.assertEqual(2, labjack.handle)
+
+    def test_only_the_stream_errors_that_say_nothing_about_the_sweep_are_recoverable(self):
+        with patch("LabExT.Instruments.LabJack.ljm", FakeLJM([])):
+            self.assertTrue(LabJack.is_recoverable_stream_error(FakeLJMError(1279)))
+            self.assertTrue(LabJack.is_recoverable_stream_error(FakeLJMError(STREAM_IS_ACTIVE_CODE)))
+            self.assertFalse(LabJack.is_recoverable_stream_error(FakeLJMError(1314)))
+            self.assertFalse(LabJack.is_recoverable_stream_error(ValueError("not LJM at all")))
 
 
 if __name__ == "__main__":

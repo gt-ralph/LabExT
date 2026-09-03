@@ -23,6 +23,17 @@ STREAM_NOT_RUNNING_CODES = (ljm.errorcodes.STREAM_NOT_RUNNING, 2620)
 # ljm.errorcodes either.
 STREAM_IS_ACTIVE_CODE = 2605
 
+# stream failures a fresh start gets past: the traffic on the connection has got out of step
+# (1279) or the device was left streaming by the session before (2605). Neither says anything
+# about the sweep that was being recorded, so both are worth another attempt - as opposed to,
+# say, a laser that refused its sweep settings, where a retry would fail the same way.
+RECOVERABLE_STREAM_ERROR_CODES = (ljm.errorcodes.TRANSACTION_ID_ERR, STREAM_IS_ACTIVE_CODE)
+
+# how long to leave the LabJack alone between dropping every connection to it and opening a
+# new one. Restarting LabExT is what got a run going again before this, and part of what that
+# did was leave the device to itself for a few seconds.
+RESET_SETTLE_S = 2.0
+
 # how a handle describes itself, for the log. USB and Ethernet carry stream data differently,
 # so which one is in use is the first thing worth knowing about a stream that broke.
 _DEVICE_NAMES = {getattr(ljm.constants, n): n[2:] for n in ("dtT4", "dtT7", "dtT8", "dtDIGIT")
@@ -89,6 +100,31 @@ class LabJack:
                 self.logger.exception("could not close the LabJack handle before reopening it")
                 self.handle = None
             self.open()
+
+    def reset(self, reason):
+        """Puts LJM and the device back to what a just-started LabExT would find.
+
+        `reconnect` only drops the handle this object knows about. This drops every handle the
+        process holds, which is as close to restarting LabExT - the thing that reliably got a
+        stuck run going again - as the library allows without unloading it, and gives the
+        device a moment to itself before asking for a new connection.
+        """
+        with self._handle_lock:
+            self.logger.info("resetting the LabJack: %s", reason)
+            self.handle = None
+            try:
+                ljm.closeAll()
+            except Exception:
+                # nothing here can be trusted anyway - the point is to arrive at a new
+                # connection, and closeAll refusing does not stop that
+                self.logger.exception("could not close the open LabJack connections")
+            time.sleep(RESET_SETTLE_S)
+            self.open()
+
+    @staticmethod
+    def is_recoverable_stream_error(err):
+        """Says whether `err` is a stream failure that starting over has a chance against."""
+        return isinstance(err, ljm.LJMError) and err.errorCode in RECOVERABLE_STREAM_ERROR_CODES
 
     def _ensure_handle(self):
         """Opens a connection if a previous reconnect could not get one back."""
