@@ -102,6 +102,11 @@ class LaserMainframeKeysight(Instrument):
     def __exit__(self, exc_type, exc_value, traceback):
         """ counterpart to the __enter__() function """
         try:
+            # leaving this block early - a measurement that raised mid-sweep - lands here
+            # while the laser is still sweeping, and it rejects the switch-off below until
+            # the sweep is over. Reporting that instead of switching the light off would
+            # leave the output on over an already failed measurement.
+            self.sweep_wl_stop()
             self.enable = False
         except Exception as exc:
             # Switching the output off reads the laser's error queue, and the laser posts
@@ -313,6 +318,17 @@ class LaserMainframeKeysight(Instrument):
             raise InstrumentException("Sweep function never waited for trigger within set network timeout.")
         # start sweep by sending software trigger
         self.command_channel("sour", ":wav:swe:soft")
+
+    def sweep_wl_stop(self):
+        """Stops a sweep that is in progress, and does nothing if none is.
+
+        The laser refuses commands that change the output state while it is sweeping, so
+        anything that has to switch the output off before the sweep would have ended on its
+        own - an aborted measurement - has to come through here first.
+        """
+        if not self.sweep_wl_busy():
+            return
+        self.command_channel("sour", ":wav:swe 0")
 
     def sweep_wl_busy(self):
         """
