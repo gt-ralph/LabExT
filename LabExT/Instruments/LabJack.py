@@ -18,6 +18,11 @@ import numpy as np
 # stop on an idle device raises the second, so both have to count as "nothing to stop".
 STREAM_NOT_RUNNING_CODES = (ljm.errorcodes.STREAM_NOT_RUNNING, 2620)
 
+# the T-series device refuses a write to a stream register while it is streaming under this
+# code. Like 2620 it comes from the device rather than the library, so it has no name in
+# ljm.errorcodes either.
+STREAM_IS_ACTIVE_CODE = 2605
+
 # how a handle describes itself, for the log. USB and Ethernet carry stream data differently,
 # so which one is in use is the first thing worth knowing about a stream that broke.
 _DEVICE_NAMES = {getattr(ljm.constants, n): n[2:] for n in ("dtT4", "dtT7", "dtT8", "dtDIGIT")
@@ -70,8 +75,9 @@ class LabJack:
         step - a stream packet from an earlier session still in the pipe, a device that kept
         streaming after a stop went missing, or a dropped packet. None of that can be undone
         on the connection it happened on: only a new handle starts from an empty receive
-        buffer. Reopening also costs nothing between measurements, and unlike a second
-        parallel connection it leaves exactly one handle on the device.
+        buffer. Unlike a second parallel connection this leaves exactly one handle on the
+        device - but it is not free either, because a new handle also restarts the transaction
+        ids LJM expects, so keep it for a connection that is already out of step.
         """
         with self._handle_lock:
             self.logger.debug("reconnecting to the LabJack: %s", reason)
@@ -113,6 +119,42 @@ class LabJack:
 
         # Enable
         ljm.eWriteName(self.handle, "%s_EF_ENABLE" % self.TRIGGER_NAME, 1)
+
+    def disarm_stream_trigger(self):
+        """Takes the stream trigger back off the trigger line.
+
+        The laser goes on stepping - and so goes on pulsing the trigger line at the step rate
+        - for a moment after the last read a measurement needed, because the recording stops
+        on the scans it asked for while the sweep still has a fraction of a second to run. A
+        trigger left armed over a stopped stream gives the device a reason to start streaming
+        again on its own, and a stream nobody asked for is how a stop LJM reported as clean is
+        followed by a device that is still streaming (STREAM_IS_ACTIVE) and by packets that
+        match no request (LJME_TRANSACTION_ID_ERR).
+
+        Stream registers cannot be written while a stream is running, so this can only run
+        after the stop - and a pulse can beat it to the device in between, which is what the
+        retry is for.
+        """
+        names = ["STREAM_TRIGGER_INDEX"]
+        values = [0]
+        trigger_name = getattr(self, "TRIGGER_NAME", None)
+        if trigger_name is not None:
+            names.append("%s_EF_ENABLE" % trigger_name)
+            values.append(0)
+
+        for last_attempt in (False, True):
+            try:
+                ljm.eWriteNames(self.handle, len(names), names, values)
+                return
+            except ljm.LJMError as err:
+                if err.errorCode != STREAM_IS_ACTIVE_CODE or last_attempt:
+                    raise
+                # logged at info because it is the proof that the device restarted its own
+                # stream off a trigger pulse, rather than something else having gone wrong
+                self.logger.info(
+                    "the LabJack was streaming again after its stream was stopped - a trigger "
+                    "pulse restarted it; stopping it once more and disarming the trigger")
+                self.stop_stream()
 
     def configure_ljm_for_triggered_stream(self):
         ljm.writeLibraryConfigS(ljm.constants.STREAM_SCANS_RETURN, ljm.constants.STREAM_SCANS_RETURN_ALL_OR_NONE)
@@ -196,9 +238,11 @@ class LabJack:
         global_data = []
         stats = {'reads': 0, 'scans': 0, 'skipped': 0, 'device backlog': 0, 'LJM backlog': 0}
 
+        failed = True
         try:
             self._read_stream_into(global_data, max_requests, scans_per_read,
                                    new_scan_rate, channels, nc, stats)
+            failed = False
         finally:
             # how far the stream got is the difference between a connection or trigger that
             # never delivered anything and one that broke partway through, and the traceback
@@ -208,7 +252,7 @@ class LabJack:
                 "backlog at last read: device %s, LJM %s",
                 self.handle, stats['reads'], int(max_requests), int(stats['scans']),
                 stats['skipped'], stats['device backlog'], stats['LJM backlog'])
-            self._end_stream_session()
+            self._end_stream_session(failed)
 
         global_data = np.atleast_2d(np.concatenate(global_data)).T
         # throw away garbage data
@@ -216,19 +260,34 @@ class LabJack:
 
         return global_data
 
-    def _end_stream_session(self):
-        """Stops the stream and leaves the next one a connection it can trust.
+    def _end_stream_session(self, failed):
+        """Puts the stream and its trigger back to rest, however the session ended.
 
-        Called however the session ended: the stream has to be stopped whatever happened, so
-        that a failure here cannot stop the next measurement from ever starting one.
+        The stream has to be stopped whatever happened, so that a failure here cannot stop the
+        next measurement from ever starting one. `failed` says whether the reads raised, which
+        decides whether the connection itself is still to be trusted.
         """
         try:
             self.stop_stream()
+            self.disarm_stream_trigger()
+            # nothing can re-trigger the device now, so a stop here is the one that sticks -
+            # and it is a no-op if the stop above already landed
+            self.stop_stream()
         except Exception:
-            self.logger.exception("could not stop the LabJack stream")
+            self.logger.exception("could not put the LabJack stream and its trigger back to rest")
+            failed = True
 
+        if not failed:
+            return
+
+        # a session that raised leaves LJM and the device out of step - and once they are,
+        # nothing sent over that connection puts them back, which is how one failed read used
+        # to cost every later measurement in the queue with STREAM_IS_ACTIVE. Only a new
+        # handle starts from an empty receive buffer. A session that ended cleanly keeps its
+        # connection: reopening resets the transaction ids LJM expects, which turns a packet
+        # still on its way from the old session into a mismatch on the first read of the next.
         try:
-            self.reconnect("stream session finished")
+            self.reconnect("the stream session did not end cleanly")
         except Exception:
             # the data read before this point is good and is about to be returned, so a
             # connection that will not come back must not take it down with it - the next
@@ -236,10 +295,6 @@ class LabJack:
             self.logger.exception("could not reopen the LabJack after the stream session")
             return
 
-        # the stop above went out on the connection the stream ran on, and a stream that
-        # broke that connection can swallow it - LJM then reports a clean stop while the
-        # device keeps streaming, and every later measurement fails at once with
-        # STREAM_IS_ACTIVE. Repeating it on the new handle is a no-op if the first landed.
         try:
             self.stop_stream()
         except Exception:
