@@ -5,15 +5,17 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
+import copy
 import json
 import logging
 import os
 from typing import List
 
 from LabExT.Experiments.QueueValidation import validate_queue, validate_queue_warnings
-from LabExT.Experiments.ToDo import MoveEntry, SfpEntry, ToDo
+from LabExT.Experiments.ToDo import CalibEntry, MoveEntry, SfpEntry, ToDo
 from LabExT.Measurements.MeasAPI.Measparam import MeasParamFloat
-from LabExT.Utils import get_configuration_file_path
+from LabExT.SearchForPeak.PeakSearcher import PeakSearcher
+from LabExT.Utils import get_configuration_file_path, get_visa_address
 
 QUEUE_FILE_VERSION = 1
 
@@ -70,29 +72,129 @@ def _build_measurement(experiment, entry: dict, index: int):
                 f"Known parameters: {sorted(measurement.parameters)}"
             )
         parameter = measurement.parameters[name]
-
-        # JSON has no int/float distinction, but MeasParamFloat insists on a real float,
-        # so a queue writing 1550 for a float parameter would otherwise be rejected
-        if isinstance(parameter, MeasParamFloat) and type(value) is int:
-            value = float(value)
-
         # dropdown parameters fail confusingly deep inside the instrument if given a value
-        # that is not one of their options, so catch it here instead
-        options = getattr(parameter, "options", None)
-        if options is not None and value not in options:
-            raise QueueLoadError(
-                f"entry {index}: '{value}' is not a valid option for parameter '{name}' of "
-                f"'{class_name}'. Valid options: {list(options)}"
-            )
-
-        try:
-            parameter.value = value
-        except ValueError as exc:
-            raise QueueLoadError(
-                f"entry {index}: cannot set parameter '{name}' of '{class_name}' to {value!r}: {exc}"
-            ) from exc
+        # that is not one of their options, so this checks options too
+        parameter.value = _coerce_parameter_value(parameter, name, value, index, class_name)
 
     return measurement
+
+
+def _coerce_parameter_value(parameter, name: str, value, index: int, owner: str):
+    """Checks one parameter value against its MeasParam and returns the value to set."""
+    # JSON has no int/float distinction, but MeasParamFloat insists on a real float,
+    # so a queue writing 1550 for a float parameter would otherwise be rejected
+    if isinstance(parameter, MeasParamFloat) and type(value) is int:
+        value = float(value)
+
+    options = getattr(parameter, "options", None)
+    if options is not None and value not in options:
+        raise QueueLoadError(
+            f"entry {index}: '{value}' is not a valid option for parameter '{name}' of "
+            f"'{owner}'. Valid options: {list(options)}"
+        )
+
+    # setting a throwaway copy validates the value without touching the original
+    probe = copy.deepcopy(parameter)
+    try:
+        probe.value = value
+    except ValueError as exc:
+        raise QueueLoadError(f"entry {index}: cannot set parameter '{name}' of '{owner}' to {value!r}: {exc}") from exc
+    return value
+
+
+def _build_sfp_parameters(entry: dict, index: int) -> dict:
+    """Validates the Search for Peak parameter overrides of one 'sfp' entry."""
+    raw = entry.get("parameters") or {}
+    if not isinstance(raw, dict):
+        raise QueueLoadError(f"entry {index}: 'parameters' of an 'sfp' entry must be an object.")
+
+    known = PeakSearcher.get_default_parameter()
+    parameters = {}
+    for name, value in raw.items():
+        if name not in known:
+            raise QueueLoadError(
+                f"entry {index}: Search for Peak has no parameter '{name}'. Known parameters: {sorted(known)}"
+            )
+        parameters[name] = _coerce_parameter_value(known[name], name, value, index, "Search for Peak")
+    return parameters
+
+
+def resolve_instrument(role: str, spec, index: int) -> dict:
+    """Turns a queue's instrument choice for a role into a full instrument descriptor.
+
+    Accepts a full descriptor (has a "visa" key, used as-is, like 'meas' entries store it), a
+    class name ("LaserSantec"), or {"class": ..., "visa": ... (optional), "channel": ... (optional)}.
+    Short forms are looked up in instruments.config; they must match exactly one configured
+    instrument, and a channel must be given if that instrument has more than one.
+    """
+    if isinstance(spec, str):
+        spec = {"class": spec}
+    if not isinstance(spec, dict) or not spec.get("class"):
+        raise QueueLoadError(f"entry {index}: instrument for role '{role}' must be a class name or an object with 'class'.")
+    if "visa" in spec and ("channel" in spec or "channels" in spec):
+        # complete descriptor, e.g. copied from a saved queue or the GUI selection
+        descriptor = copy.deepcopy(spec)
+        descriptor.setdefault("channel", (descriptor.get("channels") or [None])[0])
+        return descriptor
+
+    try:
+        configured = get_visa_address(role)
+    except Exception as exc:
+        raise QueueLoadError(f"entry {index}: cannot look up instruments for role '{role}': {exc}") from exc
+
+    matches = [
+        c for c in configured
+        if c.get("class") == spec["class"] and ("visa" not in spec or c.get("visa") == spec["visa"])
+    ]
+    if len(matches) != 1:
+        available = [f"{c.get('class')} at {c.get('visa')}" for c in configured]
+        raise QueueLoadError(
+            f"entry {index}: {len(matches)} configured instruments match {spec} for role '{role}', "
+            f"expected exactly one. Configured: {available}. Add 'visa' to pick one."
+        )
+
+    descriptor = copy.deepcopy(matches[0])
+    channels = descriptor.get("channels") or []
+    channel = spec.get("channel")
+    if channel is None:
+        if len(channels) > 1:
+            raise QueueLoadError(
+                f"entry {index}: instrument {spec['class']} for role '{role}' has channels {channels}, name one with 'channel'."
+            )
+        channel = channels[0] if channels else None
+    elif channels and channel not in channels:
+        raise QueueLoadError(
+            f"entry {index}: channel {channel} is not available on {spec['class']} for role '{role}' (channels {channels})."
+        )
+    descriptor["channel"] = channel
+    return descriptor
+
+
+def _build_sfp_instruments(entry: dict, index: int) -> dict:
+    """Resolves the instrument overrides of one 'sfp' entry to full descriptors."""
+    raw = entry.get("instruments") or {}
+    if not isinstance(raw, dict):
+        raise QueueLoadError(f"entry {index}: 'instruments' of an 'sfp' entry must be an object.")
+
+    wanted = PeakSearcher.get_wanted_instrument()
+    instruments = {}
+    for role, spec in raw.items():
+        if role not in wanted:
+            raise QueueLoadError(f"entry {index}: Search for Peak has no instrument role '{role}'. Roles: {wanted}")
+        instruments[role] = resolve_instrument(role, spec, index)
+    return instruments
+
+
+def _build_calib_entry(entry: dict, index: int) -> CalibEntry:
+    """Creates the CalibEntry of one 'calib' entry."""
+    file_path = entry.get("file")
+    if file_path is not None and not os.path.isfile(file_path):
+        raise QueueLoadError(f"entry {index}: chip map file {file_path!r} does not exist.")
+    try:
+        return CalibEntry(
+            action=entry.get("action"), profile=entry.get("profile"), pause=entry.get("pause"), file=file_path)
+    except ValueError as exc:
+        raise QueueLoadError(f"entry {index}: {exc}") from exc
 
 
 def _resolve_device(chip, entry: dict, index: int, required: bool):
@@ -129,7 +231,15 @@ def build_entries(queue_data: dict, experiment_manager) -> List:
         if entry_type == "move":
             entries.append(MoveEntry(device=_resolve_device(chip, raw_entry, index, required=True)))
         elif entry_type == "sfp":
-            entries.append(SfpEntry(device=_resolve_device(chip, raw_entry, index, required=False)))
+            entries.append(
+                SfpEntry(
+                    device=_resolve_device(chip, raw_entry, index, required=False),
+                    parameters=_build_sfp_parameters(raw_entry, index),
+                    instruments=_build_sfp_instruments(raw_entry, index),
+                )
+            )
+        elif entry_type == "calib":
+            entries.append(_build_calib_entry(raw_entry, index))
         elif entry_type == "meas":
             device = _resolve_device(chip, raw_entry, index, required=True)
             measurement = _build_measurement(experiment, raw_entry, index)
@@ -145,7 +255,9 @@ def build_entries(queue_data: dict, experiment_manager) -> List:
                 )
             )
         else:
-            raise QueueLoadError(f"entry {index}: unknown entry type {entry_type!r}, expected 'move', 'sfp' or 'meas'.")
+            raise QueueLoadError(
+                f"entry {index}: unknown entry type {entry_type!r}, expected 'move', 'sfp', 'meas' or 'calib'."
+            )
 
     return entries
 

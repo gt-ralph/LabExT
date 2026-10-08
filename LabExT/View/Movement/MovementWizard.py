@@ -1114,6 +1114,29 @@ class CoordinatePairingStep(Step):
                     command=partial(self._run_calibration_health_check, calibration)
                 ).grid(row=4, column=1, padx=2, pady=2, sticky=W)
 
+            # CHIP MAP STATE (used for moves once it has a point)
+            chip_map = calibration.chip_map
+            Label(
+                stage_calibration_frame,
+                text="Chip Map ({}):".format(calibration.active_chip_map_profile)
+            ).grid(row=5, column=0, padx=2, pady=2, sticky=W)
+            Label(
+                stage_calibration_frame,
+                text=chip_map,
+                foreground='#4BB543' if chip_map.is_valid else "#FF3333",
+            ).grid(row=5, column=1, padx=2, pady=2, sticky=W)
+
+            if chip_map.is_valid:
+                diagnostics = chip_map.get_diagnostics()
+                loo_um = diagnostics["loo_rmse_um"]
+                Label(
+                    stage_calibration_frame,
+                    text="Yaw {:.3f}° - Tilt {:.3f}° - Leave-one-out error {}".format(
+                        diagnostics["yaw_deg"],
+                        diagnostics["tilt_deg"],
+                        "{:.2f} um".format(loo_um) if loo_um is not None else "n/a (needs more points)")
+                ).grid(row=6, column=1, padx=2, pady=2, sticky=W)
+
         # FRAME FOR NEW PAIRING
         new_pairing_frame = CustomFrame(frame)
         new_pairing_frame.title = "Create New Pairing"
@@ -1188,6 +1211,7 @@ class CoordinatePairingStep(Step):
         for calibration in self.mover.calibrations.values():
             calibration.reset_single_point_offset()
             calibration.reset_kabsch_rotation()
+            calibration.reset_chip_map()
 
         self.pairings = []
 
@@ -1216,10 +1240,17 @@ class CoordinatePairingStep(Step):
             calibration.reset_single_point_offset()
             calibration.reset_kabsch_rotation()
 
+        # The chip map keeps its other points (and their search-for-peak history),
+        # only the removed devices are dropped from it
+        for p in blacklisted_pairings:
+            if p.device is not None:
+                p.calibration.chip_map.remove_points_for_device(p.device.id)
+            p.calibration.determine_state(skip_connection=True)
+
         self.pairings = []
 
         # Calc new transformations
-        self._save_coordinate_pairing(whitelisted_pairings)
+        self._save_coordinate_pairing(whitelisted_pairings, add_to_chip_map=False)
         self.wizard.__reload__()
 
     def _get_selected_pairings(self) -> List[CoordinatePairing]:
@@ -1308,16 +1339,33 @@ class CoordinatePairingStep(Step):
                 "Could not initiate a new coordinate pairing: {}".format(e),
                 parent=self.wizard)
 
-    def _save_coordinate_pairing(self, pairings: List[CoordinatePairing]):
+    def _save_coordinate_pairing(
+            self,
+            pairings: List[CoordinatePairing],
+            add_to_chip_map: bool = True):
         """
         Delegates the list of pairings to the responsible calibrations.
+
+        Re-pairing a device replaces its earlier pairing.
         """
         for p in pairings:
             if not p.calibration._single_point_offset.is_valid:
                 p.calibration.update_single_point_offset(p)
 
-            p.calibration.update_kabsch_rotation(p)
+            p.calibration.update_kabsch_rotation(p, replace_existing=True)
+            if add_to_chip_map:
+                p.calibration.update_chip_map(p, source="wizard")
+
+            self.pairings = [
+                q for q in self.pairings
+                if not (q.calibration == p.calibration and q.device == p.device)]
             self.pairings.append(p)
+
+        if add_to_chip_map and pairings:
+            try:
+                self.mover.dump_chip_map()
+            except OSError as err:
+                self.mover.logger.warning(f"Could not write chip map file: {err}")
 
         self.wizard.__reload__()
 

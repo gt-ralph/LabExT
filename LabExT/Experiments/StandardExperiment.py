@@ -13,6 +13,7 @@ import time
 import traceback
 import uuid
 from collections import OrderedDict
+from contextlib import contextmanager
 from glob import glob
 from os import rename, makedirs
 from os.path import dirname, join
@@ -21,7 +22,7 @@ from tkinter import Tk, messagebox
 from typing import TYPE_CHECKING, Type, List, Tuple, Union
 
 from LabExT.Experiments.AutosaveDict import AutosaveDict
-from LabExT.Experiments.ToDo import MoveEntry, SfpEntry
+from LabExT.Experiments.ToDo import CalibEntry, MoveEntry, SfpEntry
 from LabExT.Measurements.MeasAPI.Measurement import Measurement
 from LabExT.Movement.MoverNew import MoverNew
 from LabExT.Movement.config import CoordinateSystem
@@ -121,6 +122,9 @@ class StandardExperiment:
         # device the most recent queued MoveEntry moved to, used to attribute a following
         # sfp step to a device when the queue does not name one on the sfp entry itself
         self._last_queued_move_device = None
+        # set by a pausing calib entry: the next queued move may find an empty chip map, because
+        # the user positions the stages on that device by hand
+        self._manual_alignment_pending = False
 
         # data structures for FINISHED measurements
         self.measurements: ObservableList[MeasurementDict] = ObservableList()
@@ -214,7 +218,7 @@ class StandardExperiment:
 
             # explicit alignment steps (from a loaded experiment queue) are executed and popped
             # here; everything below this point handles measurement entries only
-            if isinstance(current_todo, (MoveEntry, SfpEntry)):
+            if isinstance(current_todo, (MoveEntry, SfpEntry, CalibEntry)):
                 if not self._execute_alignment_entry(current_todo):
                     break
                 self.update()
@@ -222,6 +226,10 @@ class StandardExperiment:
                     self.show_meas_finished_infobox()
                     self.logger.info("Experiment and hereby all measurements finished.")
                     return
+                # a calib entry may ask to stop here, so the stages can be positioned by hand
+                if isinstance(current_todo, CalibEntry) and current_todo.pause:
+                    self._pause_for_manual_alignment(current_todo)
+                    break
                 continue
 
             device = current_todo.device
@@ -301,6 +309,7 @@ class StandardExperiment:
             # execute automatic search for peak
             if self.exctrl_enable_sfp and current_todo.auto_align:
                 self._peak_searcher.update_params_from_savefile()
+                self._peak_searcher.set_prediction_sigma_um(self._chip_map_sigma_um(device))
                 data["search for peak"] = self._peak_searcher.search_for_peak()
                 self.logger.info("Search for peak done.")
 
@@ -436,14 +445,25 @@ class StandardExperiment:
         copied into every measurement that follows it, so provenance survives in both places.
 
         Args:
-            entry: A `MoveEntry` or `SfpEntry`.
+            entry: A `MoveEntry`, `SfpEntry` or `CalibEntry`.
 
         Returns:
             True if the step succeeded and was popped off the queue, False if it failed (the
             entry stays in the queue and the experiment pauses, mirroring measurement errors).
         """
         try:
-            if isinstance(entry, MoveEntry):
+            if isinstance(entry, MoveEntry) and self._manual_alignment_pending and not self._mover.can_move_absolutely:
+                # right after a pausing calib entry the map is empty, so the stages cannot move
+                # to a device yet - the user positioned them by hand on this device
+                self._manual_alignment_pending = False
+                self._last_queued_sfp_result = None
+                self._last_queued_move_device = entry.device
+                self.logger.info(
+                    "Queued move to device %s skipped: the chip map is empty, the stages were positioned by hand.",
+                    entry.device,
+                )
+            elif isinstance(entry, MoveEntry):
+                self._manual_alignment_pending = False
                 self._mover.move_to_device(self._chip, entry.device)
                 # moving invalidates the previous alignment, so measurements after this move
                 # must not inherit the search-for-peak result recorded before it
@@ -452,9 +472,33 @@ class StandardExperiment:
                 # aligned on even when the queue does not name one explicitly
                 self._last_queued_move_device = entry.device
                 self.logger.info("Queued move to device: %s", entry.device)
+            elif isinstance(entry, CalibEntry):
+                reset = entry.action == "new_map"
+                if entry.file:
+                    self._mover.load_chip_map_file(entry.file, profile=entry.profile)
+                else:
+                    self._mover.use_chip_map_profile(entry.profile, reset=reset)
+                # whatever was aligned before belongs to the previous map
+                self._last_queued_sfp_result = None
+                self._last_queued_move_device = None
+                self.logger.info(
+                    "Queued calibration step: %s chip map profile %r.",
+                    "started new" if reset else ("loaded" if entry.file else "switched to"),
+                    entry.profile,
+                )
+                if not self.exctrl_refine_calibration_with_sfp:
+                    self.logger.warning(
+                        "Chip map profile %r is active, but 'Refine stage calibration from Search-for-Peak "
+                        "results' is disabled, so search-for-peak results will not build the map.",
+                        entry.profile,
+                    )
             else:
+                self._manual_alignment_pending = False
                 self._peak_searcher.update_params_from_savefile()
-                sfp_results = self._peak_searcher.search_for_peak()
+                with self._sfp_entry_overrides(entry):
+                    self._peak_searcher.set_prediction_sigma_um(
+                        self._chip_map_sigma_um(entry.device or self._last_queued_move_device))
+                    sfp_results = self._peak_searcher.search_for_peak()
                 self._last_queued_sfp_result = sfp_results
                 self.logger.info("Queued search for peak done.")
 
@@ -471,6 +515,10 @@ class StandardExperiment:
                     sfp_data["device"] = aligned_device.as_dict()
                 sfp_data["timestamp"] = ts
                 sfp_data["search for peak"] = sfp_results
+                if entry.parameters:
+                    sfp_data["queue entry parameters"] = dict(entry.parameters)
+                if entry.instruments:
+                    sfp_data["queue entry instruments"] = dict(entry.instruments)
 
                 # feed the fine-aligned position back into the stage calibration
                 if self.exctrl_refine_calibration_with_sfp:
@@ -499,6 +547,81 @@ class StandardExperiment:
         self.to_do_list.pop(0)
         return True
 
+    @contextmanager
+    def _sfp_entry_overrides(self, entry: SfpEntry):
+        """Applies an sfp entry's parameter and instrument overrides for the duration of one search.
+
+        The Search for Peak's own settings (save file, GUI instrument selection) are restored
+        afterwards, so the overrides of one queue entry never leak into the next search.
+        """
+        if not entry.parameters and not entry.instruments:
+            yield
+            return
+
+        peak_searcher = self._peak_searcher
+        saved_values = {name: peak_searcher.parameters[name].value for name in entry.parameters}
+        saved_selection = dict(peak_searcher.selected_instruments) if entry.instruments else {}
+        saved_instruments = dict(peak_searcher.instruments) if entry.instruments else {}
+
+        try:
+            for name, value in entry.parameters.items():
+                peak_searcher.parameters[name].value = value
+            if entry.instruments:
+                peak_searcher.selected_instruments.update(entry.instruments)
+                missing = [r for r in peak_searcher.get_wanted_instrument() if r not in peak_searcher.selected_instruments]
+                if missing:
+                    raise RuntimeError(
+                        f"Search for Peak has no instrument selected for {missing}. Allocate its instruments "
+                        "once in the Peak Searcher window, or name every role in the queue entry."
+                    )
+                peak_searcher.init_instruments()
+            yield
+        finally:
+            for name, value in saved_values.items():
+                peak_searcher.parameters[name].value = value
+            if entry.instruments:
+                peak_searcher.selected_instruments.clear()
+                peak_searcher.selected_instruments.update(saved_selection)
+                peak_searcher.instruments = saved_instruments
+
+    def _chip_map_sigma_um(self, device: Device):
+        """Uncertainty (um) with which the chip maps place the stages on a device.
+
+        The largest sigma over all stages whose chip map can predict the device, or None if no map
+        can (e.g. the first device of a new map), in which case the search uses its configured radius.
+        """
+        if device is None or self._mover is None:
+            return None
+
+        # only sizes the search window, so it must never fail the search itself
+        sigmas = []
+        try:
+            for calibration in self._mover.calibrations.values():
+                chip_map = getattr(calibration, "chip_map", None)
+                if chip_map is None or not chip_map.is_valid:
+                    continue
+                chip_coordinate = device.input_coordinate if calibration.is_input_stage else device.output_coordinate
+                sigmas.append(float(chip_map.predict(chip_coordinate)[1]))
+        except Exception as exc:
+            self.logger.debug("No chip map prediction for device %s: %s", device.id, repr(exc))
+            return None
+        return max(sigmas) if sigmas else None
+
+    def _pause_for_manual_alignment(self, entry: CalibEntry) -> None:
+        """Switches to manual mode after a pausing calib entry and tells the user what to do next."""
+        self._manual_alignment_pending = True
+        self._experiment_manager.main_window.model.var_mm_pause.set(True)
+        next_device = next((e.device for e in self.to_do_list if e.device is not None), None)
+        msg = (
+            f"Chip map profile '{entry.profile}' is active"
+            + (" and empty" if entry.action == "new_map" else "")
+            + ". The experiment is paused.\n\n"
+            + (f"Position the stages on device {next_device.id} by hand, then press Run again. " if next_device else "")
+            + "The next search for peak adds the first point to the map."
+        )
+        self.logger.info(msg.replace("\n\n", " "))
+        messagebox.showinfo("Experiment Queue: Manual Alignment", msg)
+
     def _refine_calibration_from_sfp(self, device: Device, sfp_results: dict) -> dict:
         """Feeds a completed search-for-peak result back into the stage calibration.
 
@@ -511,7 +634,10 @@ class StandardExperiment:
         The refinement takes effect immediately: the very next `move_to_device` in
         this sweep is targeted using the improved fit. Because a bad pairing would
         therefore degrade targeting for every subsequent device, results that failed
-        the search's own quality checks are rejected rather than fed in.
+        the search's own quality checks are rejected rather than fed in, and so are
+        results that land implausibly far from the chip map's prediction (the map's
+        outlier gate). The point goes into the calibration's active chip map, and the
+        map is written to `<Raw output path>/chip_maps/` after every device.
 
         Args:
             device: The device that was just searched for peak.
@@ -544,24 +670,28 @@ class StandardExperiment:
         summary["reasons"] = []
         summary["stages"] = OrderedDict()
 
+        sfp_power_dbm = sfp_results.get("optimized through power")
+
         for calibration in self._mover.calibrations.values():
             chip_coordinate = device.input_coordinate if calibration.is_input_stage else device.output_coordinate
 
             with calibration.perform_in_system(CoordinateSystem.STAGE):
                 stage_coordinate = calibration.get_position()
 
+            pairing = CoordinatePairing(
+                calibration=calibration,
+                stage_coordinate=stage_coordinate,
+                device=device,
+                chip_coordinate=chip_coordinate,
+            )
+
             try:
-                # replace_existing: re-measuring a known device updates its reference
-                # point to the current position, so the fit follows real drift
-                calibration.update_kabsch_rotation(
-                    CoordinatePairing(
-                        calibration=calibration,
-                        stage_coordinate=stage_coordinate,
-                        device=device,
-                        chip_coordinate=chip_coordinate,
-                    ),
-                    replace_existing=True,
-                )
+                # gate=True: once the map is established, a search that lands implausibly far
+                # from the prediction (e.g. a neighbouring lobe) is recorded but not fitted.
+                # An accepted re-measurement replaces the device's earlier point, so the map
+                # follows real drift.
+                point = calibration.update_chip_map(
+                    pairing, source="sfp", gate=True, sfp_power_dbm=sfp_power_dbm)
             except Exception as exc:
                 summary["reasons"].append(f"{calibration.short_str}: {exc!r}")
                 self.logger.warning(
@@ -569,26 +699,57 @@ class StandardExperiment:
                 )
                 continue
 
-            num_pairings = len(calibration._kabsch_rotation.pairings)
-            residual_um = calibration.get_kabsch_rotation_residual_um()
-
-            summary["stages"][calibration.short_str] = OrderedDict(
+            stage_summary = OrderedDict(
                 [
                     ("stage coordinate", stage_coordinate.to_list()),
                     ("chip coordinate", chip_coordinate.to_list()),
-                    ("number of pairings", num_pairings),
-                    ("fit residual um", residual_um),
+                    ("chip map profile", calibration.active_chip_map_profile),
+                    ("accepted", point.accepted),
+                    ("reject reason", point.reject_reason),
+                    ("predicted stage coordinate", None if point.predicted_stage is None else point.predicted_stage.tolist()),
+                    ("prediction sigma um", point.sigma_um),
+                    ("correction um", point.correction_um),
                 ]
             )
+            summary["stages"][calibration.short_str] = stage_summary
+
+            if not point.accepted:
+                summary["reasons"].append(f"{calibration.short_str}: {point.reject_reason}")
+                self.logger.warning(
+                    "Not refining calibration %s from device %s: %s", calibration.short_str, device.id, point.reject_reason
+                )
+                continue
+
+            # keep the Kabsch tier in step, it backs the wizard's pairing table and health check
+            try:
+                calibration.update_kabsch_rotation(pairing, replace_existing=True)
+            except Exception as exc:
+                self.logger.debug("Kabsch rotation not updated from device %s: %s", device.id, repr(exc))
+
+            diagnostics = calibration.chip_map.get_diagnostics()
+            stage_summary["chip map"] = diagnostics
             summary["applied"] = True
 
             self.logger.info(
-                "Calibration refined from device %s: %s now has %d pairings, fit residual %s.",
+                "Chip map refined from device %s: %s now has %d points (%s), found %s from prediction, "
+                "leave-one-out error %s.",
                 device.id,
                 calibration.short_str,
-                num_pairings,
-                "{:.2f} um".format(residual_um) if residual_um is not None else "n/a (needs more points)",
+                diagnostics["active_points"],
+                diagnostics["level"],
+                "{:.2f} um (sigma {:.2f} um)".format(point.correction_um, point.sigma_um)
+                if point.correction_um is not None else "n/a (first point)",
+                "{:.2f} um".format(diagnostics["loo_rmse_um"]) if diagnostics["loo_rmse_um"] is not None else "n/a (needs more points)",
             )
+
+        # persist after every device, also rejected points, so the session record is complete
+        # and the map survives a restart
+        try:
+            output_path = getattr(self, "param_output_path", None) or self._default_save_path
+            summary["chip map file"] = self._mover.dump_chip_map(join(output_path, "chip_maps"))
+            self._mover.dump_calibrations()
+        except Exception as exc:
+            self.logger.warning("Could not save chip map: %s", repr(exc))
 
         return summary
 

@@ -103,6 +103,16 @@ class PeakSearcher(Measurement):
     - **Search fiber stabilization time**: Idle time between the stage having reached the target position and the measurement start. Meant to allow fiber oscillations to dissipate.
     - **Power averaging time**: Duration in [s] to repeatedly sample and average each power meter at every scan point, to reduce point-to-point noise. 0 takes a single instantaneous reading (no averaging).
 
+    #### Radius from Chip Map Parameters
+    When the stages were moved to a device using the stage calibration's chip map, the caller (a measurement queue or
+    sweep) hands over how uncertain that move was (`set_prediction_sigma_um()`). The first enabled pass then searches
+    exactly as wide as needed: wide while the map is still young, narrow (and fast) once it predicts well.
+    - **Enable**: use the chip map's uncertainty for the first enabled pass. Without an uncertainty (e.g. a manual search,
+      or the first device of a new map) the configured radius is used.
+    - **Sigma multiple**: first-pass radius = this multiple of the prediction uncertainty sigma.
+    - **Minimum radius** / **Maximum radius**: bounds of that radius in [um].
+    The first pass's step size is scaled by the same factor as its radius, so the number of scan points stays the same.
+
     #### Backlash Test Parameters
     Used by `test_backlash()` (also runnable from the "Test Backlash (X/Y)" button in the Search for Peak window) - a
     diagnostic that moves each stage's X and Y axis by a small amount and reverses direction repeatedly, checking that
@@ -161,6 +171,9 @@ class PeakSearcher(Measurement):
         self.instr_powermeter4 = None
         self.instr_switch = None
         self.initialized = False
+
+        # uncertainty (um) of the move that brought the stages here, consumed by the next search
+        self._prediction_sigma_um = None
 
         self.logger.info(
             'Initialized Search for Peak with method: ' + str(self.name))
@@ -341,6 +354,12 @@ class PeakSearcher(Measurement):
                 f'{pass_name} Peak Search: Power averaging time': MeasParamFloat(value=0.25, unit='s'),
             })
         params.update({
+            'Radius from Chip Map: Enable': MeasParamBool(value=False),
+            'Radius from Chip Map: Sigma multiple': MeasParamFloat(value=3.0, unit=''),
+            'Radius from Chip Map: Minimum radius': MeasParamFloat(value=3.0, unit='um'),
+            'Radius from Chip Map: Maximum radius': MeasParamFloat(value=50.0, unit='um'),
+        })
+        params.update({
             'Backlash Test: Amplitude': MeasParamFloat(value=3.0, unit='um'),
             'Backlash Test: Number of reversals': MeasParamInt(value=3, unit=''),
             'Backlash Test: Tolerance': MeasParamFloat(value=1.0, unit='um'),
@@ -350,6 +369,29 @@ class PeakSearcher(Measurement):
     @staticmethod
     def get_wanted_instrument():
         return ['Laser', 'Power Meter 1', 'Power Meter 2', 'Power Meter 3', 'Power Meter 4', 'Switch']
+
+    def set_prediction_sigma_um(self, sigma_um) -> None:
+        """
+        Hands over the uncertainty (1 sigma, um) of the move that positioned the stages, e.g. from the
+        stage calibration's chip map. Used only by the next `search_for_peak()` call, and only if
+        'Radius from Chip Map: Enable' is set. None clears it.
+        """
+        self._prediction_sigma_um = None if sigma_um is None else float(sigma_um)
+
+    def first_pass_radius_from_sigma(self, sigma_um, configured_radius_um: float, configured_step_um: float):
+        """
+        Returns (radius, step size) of the first pass for a prediction uncertainty, or the configured
+        values if the feature is disabled or no uncertainty is known.
+        """
+        if sigma_um is None or not self.parameters['Radius from Chip Map: Enable'].value:
+            return configured_radius_um, configured_step_um
+
+        r_min = self.parameters['Radius from Chip Map: Minimum radius'].value
+        r_max = self.parameters['Radius from Chip Map: Maximum radius'].value
+        k = self.parameters['Radius from Chip Map: Sigma multiple'].value
+        radius_um = float(np.clip(k * sigma_um, min(r_min, r_max), max(r_min, r_max)))
+        step_um = configured_step_um * radius_um / configured_radius_um if configured_radius_um > 0 else configured_step_um
+        return radius_um, step_um
 
     def search_for_peak(self):
         """Main Search For Peak routine
@@ -422,6 +464,10 @@ class PeakSearcher(Measurement):
                        self.parameters.items()])
         ))
 
+        # the prediction uncertainty belongs to exactly this search
+        prediction_sigma_um = self._prediction_sigma_um
+        self._prediction_sigma_um = None
+
         # setup results dictionary and save all parameters
         results = {
             'name': self.name,
@@ -473,6 +519,21 @@ class PeakSearcher(Measurement):
                     pass_name = self.PASS_NAMES[ps]
                     radius_us = self.parameters.get(f'{pass_name} Peak Search: Search Radius').value
                     stepsize_us = self.parameters[f'{pass_name} Peak Search: Search step size'].value
+                    if ps == num_peak_searches[0]:
+                        configured = (radius_us, stepsize_us)
+                        radius_us, stepsize_us = self.first_pass_radius_from_sigma(
+                            prediction_sigma_um, radius_us, stepsize_us)
+                        results['radius from chip map'] = {
+                            'prediction sigma um': prediction_sigma_um,
+                            'applied': (radius_us, stepsize_us) != configured,
+                            'first pass radius um': radius_us,
+                            'first pass step size um': stepsize_us,
+                        }
+                        if (radius_us, stepsize_us) != configured:
+                            self.logger.info(
+                                f"Search for peak: {pass_name} pass radius {radius_us:.2f}um, step {stepsize_us:.3f}um "
+                                f"from chip map uncertainty {prediction_sigma_um:.2f}um "
+                                f"(configured {configured[0]:.2f}um / {configured[1]:.3f}um).")
                     pause_time_ms = self.parameters[f'{pass_name} Peak Search: Search fiber stabilization time'].value
                     power_averaging_time_s = self.parameters[f'{pass_name} Peak Search: Power averaging time'].value
 

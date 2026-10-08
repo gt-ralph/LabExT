@@ -21,6 +21,7 @@ from LabExT.Movement.config import CLOCKWISE_ORDERING, State, Orientation, Devic
 from LabExT.Movement.Calibration import Calibration
 from LabExT.Movement.Stage import Stage, StageError
 from LabExT.Movement.Transformations import ChipCoordinate, AxesRotation
+from LabExT.Movement.ChipMap import ChipMapTransformation
 from LabExT.Movement.PathPlanning import PathPlanning, CollisionAvoidancePlanning, SingleStagePlanning, StagePolygon
 
 from LabExT.Utils import get_configuration_file_path
@@ -77,6 +78,8 @@ class MoverNew:
         config_file_path_in_settings_dir="mover_axes_rotations.json")
     CALIBRATIONS_SETTINGS_FILE = get_configuration_file_path(
         config_file_path_in_settings_dir="mover_calibrations.json")
+    CHIP_MAPS_DIR = get_configuration_file_path(
+        config_file_path_in_settings_dir="chip_maps")
 
     def __init__(
         self,
@@ -147,13 +150,15 @@ class MoverNew:
         if self._chip == chip:
             return
 
-        # Reset chip sensitive transformations 
+        # Store the old chip's calibrations before resetting them, so they can be restored
+        # when that chip is loaded again
+        self.dump_calibrations()
+
+        # Reset chip sensitive transformations
         for calibration in self.calibrations.values():
             calibration.reset_single_point_offset()
             calibration.reset_kabsch_rotation()
-
-        # Store updates calibrations to disk
-        self.dump_calibrations()
+            calibration.reset_chip_map(all_profiles=True)
 
         # Set new chip
         self._chip = chip
@@ -793,7 +798,161 @@ class MoverNew:
                 c.stage.identifier: c.dump(
                     axes_rotation=True,
                     single_point_offset=False,
-                    kabsch_rotation=False) for c in self.calibrations.values()}, fp)
+                    kabsch_rotation=False,
+                    chip_maps=False) for c in self.calibrations.values()}, fp)
+
+    #
+    #   Chip maps
+    #
+
+    @property
+    def chip_map_profile(self) -> str:
+        """
+        Returns the active chip map profile (shared by all calibrations).
+        """
+        profiles = {c.active_chip_map_profile for c in self.calibrations.values()}
+        if len(profiles) == 1:
+            return profiles.pop()
+        return Calibration.DEFAULT_CHIP_MAP_PROFILE if not profiles else ", ".join(sorted(profiles))
+
+    def use_chip_map_profile(self, profile: str, reset: bool = False) -> None:
+        """
+        Activates a chip map profile on all calibrations.
+
+        Parameters
+        ----------
+        profile : str
+            Profile name, e.g. "4C15_Cband".
+        reset : bool = False
+            If True, the profile's map is emptied (start a fresh map under this name).
+        """
+        for calibration in self.calibrations.values():
+            calibration.use_chip_map_profile(profile, reset=reset)
+        self.dump_calibrations()
+
+    def chip_map_file_path(self, directory: str = None, profile: str = None) -> str:
+        """
+        Returns the path of the chip map file for the current chip and profile.
+        """
+        chip_name = self._chip.name if self._chip and self._chip.name else "unknown_chip"
+        profile = profile or self.chip_map_profile
+        file_name = "{}_{}.json".format(chip_name, profile)
+        file_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)
+        return join(directory or self.CHIP_MAPS_DIR, file_name)
+
+    def dump_chip_map(self, directory: str = None) -> str:
+        """
+        Writes the active chip map of every calibration to a JSON file.
+
+        The file holds every recorded point (also rejected and superseded ones) and the
+        current fit diagnostics, and is overwritten on every call.
+
+        Parameters
+        ----------
+        directory : str = None
+            Target directory. Defaults to CHIP_MAPS_DIR in the LabExT settings directory.
+
+        Returns
+        -------
+        str
+            Path of the written file.
+        """
+        file_path = self.chip_map_file_path(directory)
+        os.makedirs(dirname(file_path), exist_ok=True)
+
+        created = None
+        if os.path.isfile(file_path):
+            try:
+                with open(file_path, "r") as fp:
+                    created = json.load(fp).get("created")
+            except (OSError, json.decoder.JSONDecodeError):
+                created = None
+
+        stages = {}
+        for calibration in self.calibrations.values():
+            stages[calibration.short_str] = {
+                "stage_identifier": calibration.stage.identifier,
+                "device_port": calibration._device_port.value,
+                "axes_rotation": calibration._axes_rotation.dump(),
+                **calibration.chip_map.dump()}
+
+        with open(file_path, "w") as fp:
+            json.dump({
+                "chip_name": self._chip.name if self._chip else None,
+                "chip_path": self._chip.path if self._chip else None,
+                "profile": self.chip_map_profile,
+                "created": created or datetime.now().isoformat(),
+                "last_updated_at": datetime.now().isoformat(),
+                "stages": stages,
+            }, fp, indent=2)
+
+        return file_path
+
+    def load_chip_map_file(self, file_path: str, profile: str = None) -> str:
+        """
+        Loads a chip map file written by `dump_chip_map` into every calibration it has a stage entry for.
+
+        Stage entries are matched by stage identifier and device port. The points are refitted with the
+        calibration's current axes rotation; a different axes rotation in the file is logged.
+
+        Parameters
+        ----------
+        file_path : str
+            Path of the chip map file.
+        profile : str = None
+            Profile to store the maps under (activated on all calibrations). Defaults to the file's profile.
+
+        Returns
+        -------
+        str
+            The activated profile.
+
+        Raises
+        ------
+        MoverError
+            If the file belongs to another chip or matches none of the calibrations.
+        """
+        with open(file_path, "r") as fp:
+            data = json.load(fp)
+
+        if self._chip is not None and data.get("chip_name") not in (None, self._chip.name):
+            raise MoverError(
+                f"Chip map file {file_path} belongs to chip {data.get('chip_name')!r}, "
+                f"but chip {self._chip.name!r} is loaded.")
+
+        profile = profile or data.get("profile") or Calibration.DEFAULT_CHIP_MAP_PROFILE
+        stages = data.get("stages", {})
+
+        loaded = []
+        for calibration in self.calibrations.values():
+            stage_data = next((
+                d for d in stages.values()
+                if d.get("stage_identifier") == calibration.stage.identifier
+                and d.get("device_port") == calibration._device_port.value), None)
+            if stage_data is None:
+                continue
+
+            if stage_data.get("axes_rotation") not in (None, calibration._axes_rotation.dump()):
+                self.logger.warning(
+                    f"Chip map file {file_path}: axes rotation of {calibration.short_str} differs from the "
+                    "current one, the points are refitted with the current axes rotation.")
+
+            chip_map = ChipMapTransformation.load(
+                stage_data, axes_rotation=calibration._axes_rotation, chip=self._chip)
+            calibration.set_chip_map(profile, chip_map)
+            loaded.append(calibration)
+
+        if not loaded:
+            raise MoverError(f"Chip map file {file_path} has no entry for any of the configured stages.")
+
+        # calibrations without an entry switch to the profile too (empty), so all stages agree
+        for calibration in self.calibrations.values():
+            if calibration not in loaded:
+                calibration.use_chip_map_profile(profile)
+
+        self.logger.info(f"Loaded chip map profile {profile!r} from {file_path} for {len(loaded)} stage(s).")
+        self.dump_calibrations()
+        return profile
 
     def dump_settings(self) -> None:
         """

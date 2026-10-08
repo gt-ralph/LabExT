@@ -135,13 +135,19 @@ class SfpEntry(QueueEntry):
 
     `device` is optional and only used to feed the aligned position back into the stage
     calibration when "refine calibration from search for peak" is enabled.
+
+    `parameters` (name -> value) and `instruments` (role -> instrument descriptor) override
+    the Search for Peak's saved settings and instrument selection for this entry only, e.g.
+    the switch routing of the device's grating couplers or the laser of the band.
     """
 
     entry_type = "sfp"
 
-    def __init__(self, device: Device = None):
+    def __init__(self, device: Device = None, parameters: dict = None, instruments: dict = None):
         super().__init__()
         self.device = device
+        self.parameters = dict(parameters or {})
+        self.instruments = dict(instruments or {})
 
     def __str__(self):
         return "<SfpEntry: search for peak" + (" at " + str(self.device) if self.device else "") + ">"
@@ -153,6 +159,45 @@ class SfpEntry(QueueEntry):
         if self.device is None:
             return "", "", "Search for Peak"
         return self.device.id, self.device.type, "Search for Peak"
+
+
+class CalibEntry(QueueEntry):
+    """Queue entry switching the stage calibration's chip map profile.
+
+    `action` is "new_map" (start the profile from an empty map, e.g. for a band whose
+    alignment differs) or "use_map" (continue with the profile's existing map). With `pause`,
+    the experiment stops after this entry so the stages can be positioned on the next device
+    by hand - needed after "new_map", since an empty map cannot move to a device.
+    With `file`, a "use_map" entry first loads the profile from a chip map file (written by an
+    earlier session), e.g. to continue a band's map after a restart on another machine.
+    """
+
+    entry_type = "calib"
+
+    ACTIONS = ("new_map", "use_map")
+
+    def __init__(self, action: str, profile: str, pause: bool = None, file: str = None):
+        super().__init__()
+        if action not in self.ACTIONS:
+            raise ValueError(f"unknown calib action {action!r}, expected one of {list(self.ACTIONS)}")
+        if not profile or not isinstance(profile, str):
+            raise ValueError("calib entry needs a non-empty profile name")
+        if file is not None and action != "use_map":
+            raise ValueError("only a 'use_map' calib entry can load a chip map file")
+        self.action = action
+        self.profile = profile
+        self.file = file
+        self.pause = (action == "new_map") if pause is None else bool(pause)
+
+    def __str__(self):
+        return f"<CalibEntry: {self.action} {self.profile!r}>"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def display_columns(self):
+        verb = "Start new chip map" if self.action == "new_map" else ("Load chip map" if self.file else "Use chip map")
+        return "", "", f"{verb} '{self.profile}'" + (" (pause)" if self.pause else "")
 
 
 class DictionaryWrapper:

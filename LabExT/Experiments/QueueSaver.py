@@ -83,6 +83,16 @@ def _serialize_entry(entry, index: int, include_instruments: bool = True) -> dic
         saved = {"type": "sfp"}
         if entry.device is not None:
             saved["device_id"] = str(entry.device.id)
+        if getattr(entry, "parameters", None):
+            saved["parameters"] = dict(entry.parameters)
+        if include_instruments and getattr(entry, "instruments", None):
+            saved["instruments"] = copy.deepcopy(entry.instruments)
+        return saved
+
+    if entry_type == "calib":
+        saved = {"type": "calib", "action": entry.action, "profile": entry.profile, "pause": bool(entry.pause)}
+        if getattr(entry, "file", None):
+            saved["file"] = entry.file
         return saved
 
     if entry_type == "meas":
@@ -108,7 +118,7 @@ def _serialize_entry(entry, index: int, include_instruments: bool = True) -> dic
         return saved
 
     raise QueueSaveError(
-        f"entry {index}: cannot save entry of type {entry_type!r}, expected 'move', 'sfp' or 'meas'."
+        f"entry {index}: cannot save entry of type {entry_type!r}, expected 'move', 'sfp', 'meas' or 'calib'."
     )
 
 

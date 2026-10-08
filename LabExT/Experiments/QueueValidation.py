@@ -7,7 +7,7 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 
 from typing import List
 
-from LabExT.Experiments.ToDo import MoveEntry, SfpEntry, ToDo
+from LabExT.Experiments.ToDo import CalibEntry, MoveEntry, SfpEntry, ToDo
 
 # Two devices are considered to sit at the same input location - and therefore to be
 # measurable without re-aligning between them - if every coordinate of their input
@@ -28,7 +28,8 @@ def split_into_blocks(entries: list) -> List[List[tuple]]:
     """Splits a queue into blocks of measurements delimited by alignment steps.
 
     A `MoveEntry` or `SfpEntry` closes the block before it, since the stages are
-    (re-)positioned there. So does a ToDo that aligns itself: `auto_align` means the global
+    (re-)positioned there. A `CalibEntry` does too: it switches the chip map, and when it
+    pauses, the stages are positioned by hand. So does a ToDo that aligns itself: `auto_align` means the global
     auto-move/auto-sfp settings position the stages before that measurement, which is an
     alignment step like any other, just not a separate queue entry. Without that a queue
     built in the GUI - which carries no explicit move/sfp entries at all - would be read as
@@ -40,7 +41,7 @@ def split_into_blocks(entries: list) -> List[List[tuple]]:
     blocks = []
     current = []
     for index, entry in enumerate(entries):
-        if isinstance(entry, (MoveEntry, SfpEntry)):
+        if isinstance(entry, (MoveEntry, SfpEntry, CalibEntry)):
             if current:
                 blocks.append(current)
                 current = []
@@ -101,6 +102,8 @@ def validate_queue_warnings(entries: list) -> List[str]:
     """Returns non-fatal warnings about a queue (things worth telling the user, but not refusing)."""
     warnings = []
     for entry in entries:
+        if isinstance(entry, CalibEntry):
+            continue
         if isinstance(entry, (MoveEntry, SfpEntry)):
             break
         if isinstance(entry, ToDo):

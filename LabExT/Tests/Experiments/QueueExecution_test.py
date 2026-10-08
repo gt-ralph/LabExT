@@ -10,7 +10,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from LabExT.Experiments.StandardExperiment import StandardExperiment
 from LabExT.Experiments.ToDo import MoveEntry, SfpEntry
@@ -27,6 +27,10 @@ class QueuedAlignmentExecutionTest(unittest.TestCase):
                              in_position=[0.0, 0.0], out_position=[0.0, 0.0])
         self.output_path = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.output_path, ignore_errors=True)
+        # a failing step would otherwise block the test run on a Tk dialog
+        patcher = patch("LabExT.Experiments.StandardExperiment.messagebox")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def make_experiment(self, refine_enabled=True):
         """A StandardExperiment with just enough wired up to run alignment entries."""
@@ -48,6 +52,7 @@ class QueuedAlignmentExecutionTest(unittest.TestCase):
         experiment.exctrl_refine_calibration_with_sfp = refine_enabled
         experiment._last_queued_sfp_result = None
         experiment._last_queued_move_device = None
+        experiment._manual_alignment_pending = False
 
         experiment._peak_searcher = Mock()
         experiment._peak_searcher.search_for_peak.return_value = SFP_RESULT

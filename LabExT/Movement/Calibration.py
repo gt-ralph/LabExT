@@ -16,6 +16,7 @@ import numpy as np
 
 from LabExT.Movement.config import DevicePort, Orientation, State, Axis, Direction, CoordinateSystem
 from LabExT.Movement.Transformations import StageCoordinate, ChipCoordinate, CoordinatePairing, SinglePointOffset, AxesRotation, KabschRotation
+from LabExT.Movement.ChipMap import ChipMapPoint, ChipMapTransformation
 from LabExT.Movement.Stage import StageError
 from LabExT.Movement.PathPlanning import StagePolygon, SingleModeFiber
 
@@ -85,6 +86,8 @@ class Calibration:
 
     _logger = logging.getLogger()
 
+    DEFAULT_CHIP_MAP_PROFILE = "default"
+
     @classmethod
     def load(
         cls,
@@ -146,6 +149,17 @@ class Calibration:
             stage_polygon = StagePolygon.load(
                 calibration_data["stage_polygon"])
 
+        chip_maps = None
+        if "chip_maps" in calibration_data:
+            if axes_rotation is not None and chip is not None:
+                chip_maps = {
+                    profile: ChipMapTransformation.load(
+                        data, axes_rotation=axes_rotation, chip=chip)
+                    for profile, data in calibration_data["chip_maps"].items()}
+            else:
+                cls._logger.debug(
+                    "Cannot set chip maps when axes rotation or chip is not defined")
+
         return cls(
             mover,
             stage,
@@ -154,7 +168,10 @@ class Calibration:
             stage_polygon=stage_polygon,
             axes_rotation=axes_rotation,
             single_point_offset=single_point_offset,
-            kabsch_rotation=kabsch_rotation)
+            kabsch_rotation=kabsch_rotation,
+            chip_maps=chip_maps,
+            active_chip_map_profile=calibration_data.get(
+                "active_chip_map_profile", cls.DEFAULT_CHIP_MAP_PROFILE))
 
     def __init__(
         self,
@@ -165,7 +182,9 @@ class Calibration:
         stage_polygon: Type[StagePolygon] = None,
         axes_rotation: Type[AxesRotation] = None,
         single_point_offset: Type[SinglePointOffset] = None,
-        kabsch_rotation: Type[KabschRotation] = None
+        kabsch_rotation: Type[KabschRotation] = None,
+        chip_maps: dict = None,
+        active_chip_map_profile: str = DEFAULT_CHIP_MAP_PROFILE
     ) -> None:
         self.mover = mover
         self.stage: Type[Stage] = stage
@@ -195,6 +214,18 @@ class Calibration:
 
         assert self._single_point_offset.axes_rotation == self._axes_rotation, "Axes rotation for single point offset must be the same than for the calibration."
         assert self._kabsch_rotation.axes_rotation == self._axes_rotation, "Axes rotation for kabsch rotation must be the same than for the calibration"
+
+        # Chip maps, one per profile (e.g. one per band, since alignment differs between them).
+        # Calibrations stored before chip maps existed are carried over from their pairings.
+        self._chip_maps = dict(chip_maps or {})
+        if not self._chip_maps:
+            self._chip_maps[self.DEFAULT_CHIP_MAP_PROFILE] = self._chip_map_from_pairings()
+        for chip_map in self._chip_maps.values():
+            assert chip_map.axes_rotation == self._axes_rotation, "Axes rotation for chip maps must be the same than for the calibration"
+
+        self._active_chip_map_profile = active_chip_map_profile
+        if self._active_chip_map_profile not in self._chip_maps:
+            self._chip_maps[self._active_chip_map_profile] = ChipMapTransformation(self._axes_rotation)
 
         self._state = State.UNINITIALIZED
         self.determine_state(skip_connection=False)
@@ -438,6 +469,135 @@ class Calibration:
         """
         return self._kabsch_rotation.get_leave_one_out_errors_um()
 
+    #
+    #   Chip map
+    #
+
+    @property
+    def chip_map(self) -> ChipMapTransformation:
+        """
+        Returns the chip map of the active profile.
+        """
+        return self._chip_maps[self._active_chip_map_profile]
+
+    @property
+    def chip_maps(self) -> dict:
+        """
+        Returns all chip maps by profile name.
+        """
+        return dict(self._chip_maps)
+
+    @property
+    def active_chip_map_profile(self) -> str:
+        return self._active_chip_map_profile
+
+    @property
+    def _uses_chip_map(self) -> bool:
+        # the chip map takes over as soon as it has a point. Until then the single point
+        # offset / Kabsch tiers keep working as before, but only for the default profile:
+        # their pairings belong to it, and an explicitly started profile (e.g. another band)
+        # must not silently move with another alignment's pairings.
+        return self.chip_map.is_valid or self._active_chip_map_profile != self.DEFAULT_CHIP_MAP_PROFILE
+
+    def use_chip_map_profile(self, profile: str, reset: bool = False) -> None:
+        """
+        Activates the chip map of the given profile, creating an empty one if it does not exist.
+
+        Parameters
+        ----------
+        profile : str
+            Name of the profile, e.g. "4C15_Oband".
+        reset : bool = False
+            If True, the profile's map is emptied, i.e. a fresh map is started under this name.
+        """
+        if not profile:
+            raise ValueError("Chip map profile name must not be empty.")
+
+        if profile not in self._chip_maps:
+            self._chip_maps[profile] = ChipMapTransformation(self._axes_rotation)
+        elif reset:
+            self._chip_maps[profile].initialize()
+
+        self._active_chip_map_profile = profile
+        self._logger.info(f"{self.short_str}: using chip map profile {profile!r} ({self.chip_map})")
+        self.determine_state(skip_connection=True)
+        self.mover.update_main_model()
+
+    def update_chip_map(
+            self,
+            pairing: Type[CoordinatePairing],
+            source: str = "manual",
+            gate: bool = False,
+            sfp_power_dbm: float = None) -> ChipMapPoint:
+        """
+        Adds a coordinate pairing to the active chip map.
+        After the update, the state of the calibration is recalculated.
+
+        Parameters
+        ----------
+        pairing: CoordinatePairing
+            A coordinate pairing between a stage and chip coordinate
+        source: str = "manual"
+            Where the pairing came from, e.g. "wizard" or "sfp".
+        gate: bool = False
+            Reject the pairing if it is implausibly far from the map's prediction.
+        sfp_power_dbm: float = None
+            Power found by the search for peak, stored with the point.
+
+        Returns
+        -------
+        ChipMapPoint
+            The stored point; `accepted` tells whether it was used.
+        """
+        try:
+            return self.chip_map.add_point(
+                pairing.chip_coordinate,
+                pairing.stage_coordinate,
+                device=pairing.device,
+                source=source,
+                gate=gate,
+                sfp_power_dbm=sfp_power_dbm)
+        finally:
+            self.determine_state(skip_connection=True)
+            self.mover.update_main_model()
+
+    def set_chip_map(self, profile: str, chip_map: ChipMapTransformation, activate: bool = True) -> None:
+        """
+        Stores a chip map (e.g. loaded from a chip map file) under a profile, replacing that profile's map.
+        """
+        if chip_map.axes_rotation is not self._axes_rotation:
+            raise CalibrationError("The chip map must use this calibration's axes rotation.")
+        self._chip_maps[profile] = chip_map
+        if activate:
+            self._active_chip_map_profile = profile
+        self.determine_state(skip_connection=True)
+        self.mover.update_main_model()
+
+    def reset_chip_map(self, all_profiles: bool = False) -> None:
+        """
+        Removes all points of the active chip map (or of every profile).
+        """
+        maps = self._chip_maps.values() if all_profiles else [self.chip_map]
+        for chip_map in maps:
+            chip_map.initialize()
+        self.determine_state(skip_connection=True)
+        self.mover.update_main_model()
+
+    def _chip_map_from_pairings(self) -> ChipMapTransformation:
+        """
+        Creates a chip map from the pairings of the single point offset and Kabsch tiers.
+        """
+        chip_map = ChipMapTransformation(self._axes_rotation)
+        pairings = list(self._kabsch_rotation.pairings)
+        if self._single_point_offset.is_valid and self._single_point_offset.pairing is not None:
+            if not any(p.device == self._single_point_offset.pairing.device for p in pairings):
+                pairings.insert(0, self._single_point_offset.pairing)
+
+        for p in pairings:
+            chip_map.add_point(
+                p.chip_coordinate, p.stage_coordinate, device=p.device, source="pairing")
+        return chip_map
+
     def reset_single_point_offset(self) -> None:
         """
         Resets the single point offset transformation
@@ -484,7 +644,19 @@ class Calibration:
             return
         self._state = State.COORDINATE_SYSTEM_FIXED
 
-        # 3. Check if single point fixation is valid
+        # 3. Check if single point fixation is valid (or the chip map knows at least one point)
+        chip_map = self.chip_map
+        if self._uses_chip_map:
+            if not chip_map.is_valid:
+                return
+            self._state = State.SINGLE_POINT_FIXED
+
+            # 4. Chip map determines the full chip pose
+            if not chip_map.is_fully_constrained:
+                return
+            self._state = State.FULLY_CALIBRATED
+            return
+
         if not self._single_point_offset or not self._single_point_offset.is_valid:
             return
         self._state = State.SINGLE_POINT_FIXED
@@ -519,7 +691,9 @@ class Calibration:
         CalibrationError
             If state is insufficient to translate the coordinate.
         """
-        if self.state == State.FULLY_CALIBRATED:
+        if self._uses_chip_map and self.state >= State.SINGLE_POINT_FIXED:
+            return self.chip_map.chip_to_stage(chip_coordinate)
+        elif self.state == State.FULLY_CALIBRATED:
             return self._kabsch_rotation.chip_to_stage(
                 chip_coordinate)
         elif self.state == State.SINGLE_POINT_FIXED:
@@ -549,7 +723,9 @@ class Calibration:
         CalibrationError
             If state is insufficient to translate the coordinate.
         """
-        if self.state == State.FULLY_CALIBRATED:
+        if self._uses_chip_map and self.state >= State.SINGLE_POINT_FIXED:
+            return self.chip_map.stage_to_chip(stage_coordinate)
+        elif self.state == State.FULLY_CALIBRATED:
             return self._kabsch_rotation.stage_to_chip(stage_coordinate)
         elif self.state == State.SINGLE_POINT_FIXED:
             return self._single_point_offset.stage_to_chip(stage_coordinate)
@@ -902,7 +1078,8 @@ class Calibration:
         axes_rotation: bool = True,
         single_point_offset: bool = True,
         kabsch_rotation: bool = True,
-        stage_polygon: bool = True
+        stage_polygon: bool = True,
+        chip_maps: bool = True
     ) -> dict:
         """
         Returns a dict of all calibration properties.
@@ -925,5 +1102,11 @@ class Calibration:
         if stage_polygon and self.stage_polygon is not None:
             calibration_dump["stage_polygon"] = self.stage_polygon.dump(
                 stringify=True)
+
+        if chip_maps:
+            calibration_dump["chip_maps"] = {
+                profile: chip_map.dump() for profile, chip_map in self._chip_maps.items()
+                if chip_map.points or profile == self._active_chip_map_profile}
+            calibration_dump["active_chip_map_profile"] = self._active_chip_map_profile
 
         return calibration_dump

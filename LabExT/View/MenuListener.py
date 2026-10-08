@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from LabExT.Experiments.QueueLoader import load_queue_file
 from LabExT.Experiments.QueueSaver import save_queue_file
-from LabExT.Experiments.ToDo import SfpEntry
+from LabExT.Experiments.ToDo import CalibEntry, SfpEntry
 from LabExT.Utils import get_author_list, try_to_lift_window
 from LabExT.View.AddonSettingsDialog import AddonSettingsDialog
 from LabExT.View.Controls.DriverPathDialog import DriverPathDialog
@@ -179,7 +179,11 @@ class MListener:
         # after the stages have already moved. Only a warning: instruments can still be
         # allocated between loading the queue and pressing Run.
         peak_searcher = getattr(self._experiment_manager, "peak_searcher", None)
-        if any(isinstance(entry, SfpEntry) for entry in entries) and not (
+        wanted_roles = set(peak_searcher.get_wanted_instrument()) if peak_searcher is not None else set()
+        sfp_entries = [entry for entry in entries if isinstance(entry, SfpEntry)]
+        # entries naming every instrument role allocate their own instruments
+        sfp_needs_allocation = any(not wanted_roles.issubset(entry.instruments) for entry in sfp_entries)
+        if sfp_needs_allocation and not (
             peak_searcher is not None and peak_searcher.initialized
         ):
             messagebox.showinfo(
@@ -187,6 +191,18 @@ class MListener:
                 message="This queue contains Search-for-Peak steps, but the Peak Searcher has no "
                 "instruments allocated yet, so those steps would fail.\n\n"
                 "Open Peak Searcher (Ctrl+S) and press '1. Allocate Instruments' before running.\n\n"
+                "The queue itself loaded fine.",
+            )
+
+        # chip map profiles are only filled by search-for-peak refinement
+        if any(isinstance(entry, CalibEntry) for entry in entries) and \
+                not self._experiment_manager.exp.exctrl_refine_calibration_with_sfp:
+            messagebox.showinfo(
+                title="Calibration refinement disabled",
+                message="This queue starts chip map profiles, which are built from Search-for-Peak "
+                "results while the queue runs.\n\n"
+                "Enable 'Refine stage calibration from Search-for-Peak results' in the main window "
+                "before running, otherwise the stages cannot move to the following devices.\n\n"
                 "The queue itself loaded fine.",
             )
 
