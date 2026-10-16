@@ -21,13 +21,17 @@ from LabExT.Instruments.InstrumentAPI import Instrument, InstrumentException
 # PluginLoader silently drops any module which raises on import, which would make this driver
 # disappear from the instrument list with nothing but a log line to explain it.
 try:
-    from vmbpy import (VmbSystem, AccessMode, FrameStatus, PixelFormat, VmbTimeout)
+    from vmbpy import (VmbSystem, AccessMode, FrameStatus, PixelFormat, VmbTimeout,
+                       VmbTransportLayerError)
 
     VMBPY_AVAILABLE = True
     VMBPY_IMPORT_ERROR = None
 except Exception as _exc:  # ImportError, OSError (missing VmbC.dll), VmbSystemError, ...
     VmbSystem = AccessMode = FrameStatus = PixelFormat = None
     VmbTimeout = Exception
+
+    class VmbTransportLayerError(Exception):
+        """Placeholder so the except clauses below stay valid without vmbpy. Never raised."""
 
     VMBPY_AVAILABLE = False
     VMBPY_IMPORT_ERROR = _exc
@@ -370,6 +374,15 @@ class CameraAlliedVisionAlvium(Instrument):
                 self._vmb = None
                 self._cam = None
                 self._stack = None
+                if isinstance(exc, VmbTransportLayerError):
+                    raise InstrumentException(
+                        "Vimba X loaded no GenTL transport layers, so no camera can be reached. "
+                        "The usual cause is that the Vimba X SDK itself is not installed: the "
+                        "vmbpy wheel carries VmbC.dll but none of the .cti transport layers. "
+                        "Install Vimba X from "
+                        "https://www.alliedvision.com/en/products/software/vimba-x-sdk/ and start "
+                        "LabExT from a new shell, so that the GENICAM_GENTL64_PATH the installer "
+                        "sets is picked up. Original error: " + repr(exc)) from exc
                 if 'already in use' in str(exc) or 'AccessDenied' in type(exc).__name__:
                     raise InstrumentException(
                         "Camera is already in use by another application. Close the Vimba X Viewer "
