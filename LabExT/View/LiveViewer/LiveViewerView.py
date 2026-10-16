@@ -5,9 +5,10 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
+import logging
 from typing import TYPE_CHECKING
 from tkinter import Frame, Toplevel, OptionMenu, Button, StringVar, Scrollbar, Canvas
-from tkinter.messagebox import askyesno
+from tkinter.messagebox import askyesno, showerror
 
 from LabExT.View.LiveViewer.LiveViewerPlot import LiveViewerPlot
 from LabExT.View.Controls.ParameterTable import ParameterTable
@@ -214,17 +215,42 @@ class ControlFrame(Frame):
         """
         Function to render all cards from the correlating model
         """
+        failed = []
         for i, (card_title, card) in enumerate(self.model.cards):
             if card is not None:
                 continue
             # set up new card
-            new_card = self.model.lvcards_classes[card_title](self.content_carrier, self.controller, self.model)
+            try:
+                new_card = self.model.lvcards_classes[card_title](
+                    self.content_carrier, self.controller, self.model)
+            except Exception as exc:
+                # A card is built around one instrument role and reads instruments.config to fill
+                # its dropdown, so a bench without that role cannot have that card - which
+                # describes the bench rather than being a mistake. Dropping the card leaves the
+                # rest of the live viewer usable; letting this raise took the whole window down,
+                # which is what a saved state naming an instrument no longer on the bench used to
+                # do, with no way to open the live viewer and remove the card.
+                logging.getLogger().warning("Could not add the '%s' card: %r", card_title, exc)
+                failed.append(card_title)
+                continue
             self.model.cards[i] = (card_title, new_card)
             new_card.pack(side="top", anchor="nw", fill="x", pady=(0, 20))
 
             # when a card is newly created, we enable the GUI elements s.t. the user can set the parameters
             # this can only happen after the card has been rendered in the "pack" call above
             new_card.enable_settings_interaction()
+
+        if failed:
+            # whatever could not be built is still a (title, None) entry, and nothing downstream
+            # copes with one of those
+            self.model.cards = [entry for entry in self.model.cards if entry[1] is not None]
+            showerror(
+                "Live Viewer",
+                "Could not add these cards: " + ", ".join(failed) + ".\n\n"
+                "A card needs its instrument type in instruments.config - a Switch card needs a "
+                "'Switch' section, for instance. Add the section, or leave the card out. The rest "
+                "of the live viewer is unaffected.",
+                parent=self.parent)
 
         self.canvas.update()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

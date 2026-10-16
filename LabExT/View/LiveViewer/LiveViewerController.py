@@ -330,8 +330,12 @@ class LiveViewerController:
         except FileNotFoundError:
             # save file does not exist, don't care
             return
-        except (KeyError, IndexError, ValueError, TypeError, JSONDecodeError) as _:
-            # loading errors can be safely ignored as the state will be written anew upon liveviewer termination
+        except (KeyError, IndexError, ValueError, TypeError, RuntimeError, JSONDecodeError) as _:
+            # loading errors can be safely ignored as the state will be written anew upon liveviewer termination.
+            # RuntimeError is in the list because get_visa_address raises it for an instrument type
+            # which is not in instruments.config, which is what a state saved on another bench
+            # looks like - and losing the saved layout is a far better outcome than a live viewer
+            # that cannot be opened at all.
             self.experiment_manager.logger.warning(
                 "Could not load live viewer state from saved file. Live viewer reset to default settings."
             )
