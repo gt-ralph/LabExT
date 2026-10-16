@@ -256,6 +256,80 @@ class WizardUnitTest(TKinterTestCase):
         on_reload.assert_called_once()
 
 
+class WizardLayoutTest(TKinterTestCase):
+    """
+    Tests that a step taller than the window scrolls instead of pushing the buttons off the bottom.
+
+    Required lab setup: none, only SW testing
+    """
+
+    WINDOW_HEIGHT = 300
+
+    def setUp(self):
+        super().setUp()
+        self.wizard = Wizard(self.root, width=400, height=self.WINDOW_HEIGHT)
+
+    def build_tall_step(self, rows):
+        """A step whose content is far taller than the window."""
+        def builder(frame):
+            frame.title = "Tall Step"
+            for index in range(rows):
+                tkinter.Label(frame, text="parameter {:d}".format(index),
+                              height=2).pack(side=tkinter.TOP)
+        self.wizard.current_step = self.wizard.add_step(builder=builder, title="Tall")
+        self.pump_events()
+        self.wizard.update_idletasks()
+        self.pump_events()
+
+    def button_bar_bottom(self):
+        frame = self.wizard._control_frame
+        return frame.winfo_y() + frame.winfo_height()
+
+    @pytest.mark.flaky(reruns=3)
+    def test_the_buttons_stay_on_screen_when_the_step_is_far_too_tall(self):
+        """The regression: a long parameter list used to push Next and Cancel off the bottom."""
+        self.build_tall_step(rows=120)
+
+        self.assertTrue(self.wizard._control_frame.winfo_ismapped())
+        # the button bar has real height and sits inside the window rather than below it
+        self.assertGreater(self.wizard._control_frame.winfo_height(), 1)
+        self.assertLessEqual(self.button_bar_bottom(),
+                             self.wizard._content_frame.winfo_height() + 1)
+
+    @pytest.mark.flaky(reruns=3)
+    def test_a_tall_step_becomes_scrollable(self):
+        self.build_tall_step(rows=120)
+
+        canvas = self.wizard._scrollable_frame.canvas
+        _, top, _, bottom = (float(v) for v in canvas.cget('scrollregion').split())
+        self.assertGreater(bottom - top, canvas.winfo_height(),
+                           "the content should be taller than the visible area, so it scrolls")
+
+    @pytest.mark.flaky(reruns=3)
+    def test_a_short_step_has_nothing_to_scroll(self):
+        self.build_tall_step(rows=1)
+
+        canvas = self.wizard._scrollable_frame.canvas
+        _, top, _, bottom = (float(v) for v in canvas.cget('scrollregion').split())
+        self.assertLessEqual(bottom - top, canvas.winfo_height())
+
+    @pytest.mark.flaky(reruns=3)
+    def test_the_step_is_built_inside_the_scrollable_area(self):
+        self.build_tall_step(rows=5)
+
+        children = self.wizard._scrollable_frame.get_content_frame().winfo_children()
+        self.assertEqual(1, len([c for c in children if c.winfo_ismapped()]))
+
+    @pytest.mark.flaky(reruns=3)
+    def test_the_previous_step_is_cleared_when_another_is_shown(self):
+        self.build_tall_step(rows=5)
+        self.build_tall_step(rows=5)
+
+        children = self.wizard._scrollable_frame.get_content_frame().winfo_children()
+        mapped = [child for child in children if child.winfo_ismapped()]
+        self.assertEqual(1, len(mapped), "only the current step may be visible")
+
+
 class WizardIntegrationTest(TKinterTestCase):
     """
     Integration test for a Wizard with 2 steps.

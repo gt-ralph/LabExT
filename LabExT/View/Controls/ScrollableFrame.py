@@ -34,9 +34,45 @@ class ScrollableFrame(Frame):
         # bind callbacks, needed to propagate size changes from canvas to frame
         self.frame.bind('<Configure>', self._frame_changed)
         self.canvas.bind('<Configure>', self._canvas_changed)
-        
+
+        # The wheel is bound while the pointer is over this frame and unbound when it leaves.
+        # bind_all is what makes the wheel work over the child widgets too - a wheel event goes to
+        # the widget under the pointer, which is a parameter entry rather than the canvas - and
+        # scoping it to enter/leave is what stops one scrollable frame from stealing the wheel
+        # from another, or from a listbox.
+        self.bind('<Enter>', self._bind_mouse_wheel)
+        self.bind('<Leave>', self._unbind_mouse_wheel)
+
     def get_content_frame(self):
         return self.frame
+
+    def _bind_mouse_wheel(self, *args):
+        self.bind_all('<MouseWheel>', self._mouse_wheel)     # Windows and macOS
+        self.bind_all('<Button-4>', self._mouse_wheel)       # X11
+        self.bind_all('<Button-5>', self._mouse_wheel)
+
+    def _unbind_mouse_wheel(self, *args):
+        self.unbind_all('<MouseWheel>')
+        self.unbind_all('<Button-4>')
+        self.unbind_all('<Button-5>')
+
+    def _mouse_wheel(self, event):
+        region = self.canvas.cget('scrollregion')
+        if region:
+            # Nothing to scroll when the content fits, and scrolling anyway would let the user
+            # drag the content off the top of a short page with no way to see it has happened.
+            _, top, _, bottom = (float(v) for v in region.split())
+            if bottom - top <= self.canvas.winfo_height():
+                return
+
+        if event.num == 4:
+            delta = -1
+        elif event.num == 5:
+            delta = 1
+        else:
+            # Windows reports the wheel in multiples of 120, macOS in single steps
+            delta = -1 if event.delta > 0 else 1
+        self.canvas.yview_scroll(delta, 'units')
 
     def _canvas_changed(self, *args):
         self.canvas.itemconfigure(self.canvas_frame, width=self.canvas.winfo_width())

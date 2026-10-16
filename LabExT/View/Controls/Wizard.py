@@ -6,11 +6,13 @@ This program is free software and comes with ABSOLUTELY NO WARRANTY; for details
 """
 
 import logging
-from tkinter import Label, Toplevel, Frame, Button, FLAT, TOP, RIGHT, LEFT, X, Y, BOTH, NORMAL, DISABLED
+from tkinter import (Label, Toplevel, Frame, Button, FLAT, TOP, BOTTOM, RIGHT, LEFT, X, Y,
+                     BOTH, NORMAL, DISABLED)
 from typing import Type
 
 
 from LabExT.View.Controls.CustomFrame import CustomFrame
+from LabExT.View.Controls.ScrollableFrame import ScrollableFrame
 
 
 class Step:
@@ -178,16 +180,19 @@ class Wizard(Toplevel):
         self._content_frame = Frame(self, borderwidth=0, relief=FLAT)
         self._content_frame.pack(side=RIGHT, fill=BOTH, expand=True)
 
+        # Created here but packed at the end of the constructor, after the error and control
+        # frames. Pack hands out the cavity in the order widgets are packed, so a main frame
+        # packed first with expand=True claims everything a tall step asks for and leaves the
+        # button bar below it with nothing - which is how the Next and Cancel buttons ended up off
+        # the bottom of the window for a measurement with a long parameter list.
         self._main_frame = Frame(
             self._content_frame,
             borderwidth=0,
             relief=FLAT)
-        self._main_frame.pack(side=TOP, fill=BOTH, expand=True)
 
         if with_error:
             self._error_frame = Frame(
                 self._content_frame, borderwidth=0, relief=FLAT)
-            self._error_frame.pack(side=TOP, fill=X, padx=10, expand=0)
             self._error_label = Label(
                 self._error_frame,
                 text=None,
@@ -202,7 +207,6 @@ class Wizard(Toplevel):
             borderwidth=0,
             highlightthickness=0,
             takefocus=0)
-        self._control_frame.pack(side=TOP, fill=X, expand=0)
 
         self._cancel_button = Button(
             self._control_frame,
@@ -236,6 +240,20 @@ class Wizard(Toplevel):
             command=self._previous_step)
         self._previous_button.pack(
             side=RIGHT, fill=Y, expand=0, padx=5, pady=10)
+
+        # Anchored to the bottom and packed before the main frame, so the buttons always have
+        # their space no matter how tall the step is. The control frame goes down first so that it
+        # ends up below the error line, preserving the original top-to-bottom order.
+        self._control_frame.pack(side=BOTTOM, fill=X, expand=0)
+        if with_error:
+            self._error_frame.pack(side=BOTTOM, fill=X, padx=10, expand=0)
+        self._main_frame.pack(side=TOP, fill=BOTH, expand=True)
+
+        # Whatever height is left over goes to the step, and a step taller than that scrolls
+        # rather than being cut off. Built once and reused: __reload__ empties it per step.
+        self._scrollable_frame = ScrollableFrame(self._main_frame)
+        self._scrollable_frame.pack(side=TOP, fill=BOTH, expand=True)
+        self._step_container = self._scrollable_frame.get_content_frame()
 
         self.wm_geometry("{width:d}x{height:d}".format(
             width=width + self.SIDEBAR_WIDTH if with_sidebar else width,
@@ -281,12 +299,12 @@ class Wizard(Toplevel):
         self._finish_button.config(
             state=NORMAL if self.current_step.finish_step_enabled else DISABLED)
 
-        # Remove all widgets in main frame
-        for child in self._main_frame.winfo_children():
+        # Remove all widgets of the previous step
+        for child in self._step_container.winfo_children():
             child.forget()
 
         # Create step frame and build it by calling step builder
-        step_frame = CustomFrame(self._main_frame)
+        step_frame = CustomFrame(self._step_container)
         self.current_step.builder(step_frame)
         step_frame.pack(side=LEFT, fill=BOTH, padx=10, pady=(10, 2), expand=1)
 
