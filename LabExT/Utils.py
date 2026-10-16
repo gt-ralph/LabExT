@@ -19,6 +19,34 @@ from tkinter import TclError, Toplevel, ttk, Label
 
 import unicodedata
 
+#: Range dropdown value which hands the choice of range to the meter itself.
+AUTO_POWER_METER_RANGE = 'auto'
+
+#: What a power meter range dropdown offers, in dBm. A fixed ladder rather than the sensor's own
+#: ranges: only some meters can report theirs, every LabExT power meter driver reads `range` as dBm,
+#: and a meter rounds whatever it is given up to its nearest real range anyway. Shared by the live
+#: viewer's power meter card and by Search for Peak so the two cannot drift apart.
+POWER_METER_RANGE_OPTIONS = [AUTO_POWER_METER_RANGE,
+                             '10', '0', '-10', '-20', '-30', '-40', '-50', '-60']
+
+
+def power_meter_range_setting(value):
+    """A range dropdown's value as a power meter driver expects it: 'auto', or a float in dBm.
+
+    Accepts a plain number too, so settings saved before the dropdown existed - which stored the
+    range as a bare int or float - still load and mean the same thing.
+    """
+    text = str(value).strip().lower()
+    if text in (AUTO_POWER_METER_RANGE, '', 'none'):
+        return AUTO_POWER_METER_RANGE
+    try:
+        return float(text)
+    except ValueError:
+        raise ValueError(
+            "Power meter range must be a number in dBm or '" + AUTO_POWER_METER_RANGE + "', not "
+            + repr(value) + ".")
+
+
 def get_labext_version() -> tuple[str, str]:
     """
     Finds the release version and the current Git commit the file is on.

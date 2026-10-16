@@ -11,8 +11,10 @@ import time
 from time import sleep
 from tkinter import Button
 
-from LabExT.Measurements.MeasAPI import MeasParamInt, MeasParamFloat, MeasParamString
+from LabExT.Measurements.MeasAPI import MeasParamFloat, MeasParamList, MeasParamString
 from LabExT.View.LiveViewer.Cards.CardFrame import CardFrame, show_errors_as_popup
+from LabExT.Utils import (AUTO_POWER_METER_RANGE, POWER_METER_RANGE_OPTIONS,
+                          power_meter_range_setting)
 from LabExT.View.LiveViewer.LiveViewerModel import PlotDataPoint
 
 
@@ -23,8 +25,14 @@ class PowerMeterCard(CardFrame):
 
     # these are the default powermeter parameters
     default_parameters = {
-        # range of the power meter in dBm
-        'powermeter range': MeasParamInt(value=0, unit='dBm'),
+        # Range of the power meter, as a dropdown rather than a free number: a meter has a
+        # handful of discrete ranges and snaps whatever it is given onto them, so an arbitrary
+        # value only looks more precise than it is. 'auto' lets the meter choose, which is the
+        # right answer whenever the signal moves - and RANGE_READBACK below records what it
+        # actually settled on. The ladder is in dBm because that is what `range` means on every
+        # LabExT power meter driver.
+        'powermeter range': MeasParamList(
+            options=POWER_METER_RANGE_OPTIONS, value=AUTO_POWER_METER_RANGE, unit='dBm'),
         # integration time of power meter
         'powermeter averagetime': MeasParamFloat(value=0.1, unit='s'),
         # center wavelength of observed signal
@@ -154,7 +162,7 @@ class PowerMeterCard(CardFrame):
 
         parameters = self.ptable.to_meas_param()
 
-        pm_range = parameters['powermeter range'].value
+        pm_range = power_meter_range_setting(parameters['powermeter range'].value)
         pm_atime = parameters['powermeter averagetime'].value
         pm_wavelength = parameters['powermeter wavelength'].value
 
@@ -183,6 +191,14 @@ class PowerMeterCard(CardFrame):
                 continue
             self.enabled_channels[ac] = f'Ch{ac:s}'
 
+        # Not every meter has a range at all - a camera-backed one does not, and neither does a
+        # photodiode read through a LabJack. Assigning to a missing property would quietly create
+        # an attribute nothing reads, so ask the class whether it really has one.
+        has_range = isinstance(getattr(type(loaded_instr), 'range', None), property)
+        if not has_range:
+            self.logger.info("%s has no range setting, so the range dropdown does not apply to it.",
+                             type(loaded_instr).__name__)
+
         # configure the instrument for each activated channel
         for ac in self.enabled_channels.keys():
             with loaded_instr.thread_lock:
@@ -190,7 +206,17 @@ class PowerMeterCard(CardFrame):
                 loaded_instr.wavelength = pm_wavelength
                 loaded_instr.averagetime = pm_atime
                 loaded_instr.unit = 'dBm'
-                loaded_instr.range = pm_range
+                if has_range:
+                    loaded_instr.range = pm_range
+                    # A meter rounds a requested range up to the next one it actually has, so what
+                    # was asked for and what is in force are routinely different numbers. Worth a
+                    # line in the log, because a reading that clips or sits in the noise is
+                    # explained by the range in force and not by the one in the dropdown.
+                    try:
+                        self.logger.info("Channel %s range: asked for %s, meter is using %s.",
+                                         ac, pm_range, loaded_instr.range)
+                    except Exception:
+                        self.logger.debug("Could not read the range back.", exc_info=True)
                 loaded_instr.trigger(continuous=False)
 
         self._start_polling()

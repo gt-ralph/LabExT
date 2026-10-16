@@ -18,7 +18,8 @@ from LabExT.Measurements.MeasAPI import *
 from LabExT.Movement.MoverNew import MoverNew
 from LabExT.Movement.config import CoordinateSystem
 from LabExT.Movement.Transformations import StageCoordinate
-from LabExT.Utils import get_configuration_file_path
+from LabExT.Utils import (AUTO_POWER_METER_RANGE, POWER_METER_RANGE_OPTIONS,
+                          get_configuration_file_path, power_meter_range_setting)
 from LabExT.View.Controls.PlotControl import PlotData
 from LabExT.ViewModel.Utilities.ObservableList import ObservableList
 
@@ -88,7 +89,10 @@ class PeakSearcher(Measurement):
     - **Laser power**: power of the laser in [dBm].
 
     #### Power Meter Parameters
-    - **Power Meter range**: range of the power in [dBm].
+    - **Power Meter range**: range of the power meter in [dBm], or `auto` to let the meter
+      choose. `auto` suits a search whose coupling is unknown, since the signal off the peak
+      can be orders of magnitude below the signal at it; a fixed range avoids the settling a
+      range change costs mid-scan and is better when the coupling is roughly known.
 
     #### Switch Parameters
     - **Switch Flag**: whether to connect and use the optical switch before searching.
@@ -303,7 +307,28 @@ class PeakSearcher(Measurement):
                 sample_list.append(meter.fetch_power())
             if time.perf_counter() >= t_end:
                 break
-        return [float(np.mean(sample_list)) for sample_list in samples]
+        return [self._average_samples(meter, sample_list)
+                for meter, sample_list in zip(meters, samples)]
+
+    def _average_samples(self, meter, sample_list):
+        """Mean of one meter's samples at a scan point, ignoring the ones it could not take.
+
+        A meter reports an unreadable sample - over range, or a failed read - as nan. With a fixed
+        range those are a real problem and should fail the scan, which is what returning nan does:
+        the caller checks the trace with `np.isfinite` and says a range change is needed. With
+        autoranging they are also produced transiently by the range switch itself, and letting one
+        of those poison the mean would make autorange worse than the fixed range it is meant to
+        replace. So a point is only nan when *every* sample at it was.
+        """
+        finite = [value for value in sample_list if np.isfinite(value)]
+        if not finite:
+            return float('nan')
+        if len(finite) != len(sample_list):
+            self.logger.debug(
+                "%s: %d of %d samples at this point were unreadable and were left out of the "
+                "average; this is expected occasionally while autoranging.",
+                type(meter).__name__, len(sample_list) - len(finite), len(sample_list))
+        return float(np.mean(finite))
 
     def init_instruments(self):
         """Instantiate the selected instruments, skipping meter slots left unused.
@@ -372,7 +397,16 @@ class PeakSearcher(Measurement):
             else:
                 meter.unit = 'dBm'
                 meter.wavelength = self.parameters['Laser wavelength'].value
-                meter.range = self.parameters['Power Meter range'].value
+                meter.range = power_meter_range_setting(
+                    self.parameters['Power Meter range'].value)
+                try:
+                    # A meter rounds a requested range up to its nearest real one, so what was
+                    # asked for and what is in force are routinely different numbers - and which
+                    # one is in force is what decides whether the flanks of a scan clear the noise.
+                    self.logger.info("%s range in force: %s.",
+                                     type(meter).__name__, meter.range)
+                except Exception:
+                    self.logger.debug("Could not read the range back.", exc_info=True)
 
         self._linear_contrast_threshold = max(
             0.0, float(self.parameters['Camera no-peak contrast threshold'].value) / 100.0)
@@ -469,7 +503,14 @@ class PeakSearcher(Measurement):
             'M = 4': MeasParamInt(value=4, unit='N Port'),
             'Laser wavelength': MeasParamInt(value=1550, unit='nm'),
             'Laser power': MeasParamFloat(value=0.0, unit='dBm'),
-            'Power Meter range': MeasParamFloat(value=0.0, unit='dBm'),
+            # A dropdown rather than a free number, and defaulting to 'auto', because a
+            # search covers a wide span of coupling: off the peak the signal can be orders of
+            # magnitude below what it is at the peak, and one fixed range cannot hold both without
+            # either clipping at the top or burying the flanks in the noise floor. A fixed range is
+            # still the better choice when the coupling is roughly known, since it avoids the
+            # settling a range change costs mid-scan.
+            'Power Meter range': MeasParamList(
+                options=POWER_METER_RANGE_OPTIONS, value=AUTO_POWER_METER_RANGE, unit='dBm'),
             # Only applies to camera-backed power meters. Counts is the default because the
             # intensity profile of a beam is Gaussian in linear units, which is the shape
             # fit_gaussian() looks for; in dB it is a parabola and fits less well.
