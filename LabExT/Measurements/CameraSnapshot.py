@@ -12,7 +12,7 @@ import os
 import re
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from time import sleep
+from time import perf_counter, sleep
 
 from typing import TYPE_CHECKING, Dict
 
@@ -30,6 +30,10 @@ else:
 
 #: leading digits of a pixel format name, e.g. 12 from 'Mono12'
 _PIXEL_FORMAT_BITS = re.compile(r'(\d+)')
+
+#: Floor for the watts-to-dBm conversion of the power meter's readings, matching the one
+#: PowerMeterCameraAlvium uses for counts. A dark sensor reads zero or slightly negative.
+MINIMUM_SPHERE_DBM = -300.0
 
 
 def _full_scale_counts(pixel_format, dtype):
@@ -213,6 +217,7 @@ class CameraSnapshot(Measurement):
 
         self.instr_camera = None
         self.instr_laser = None
+        self.instr_pm = None
 
     #: parameters the camera view can hand over, mapped to the type each one must be stored as.
     #: Kept here rather than in the GUI so that the two sides cannot drift apart.
@@ -302,6 +307,25 @@ class CameraSnapshot(Measurement):
             'save NPY': MeasParamBool(value=False),
             'image output directory': MeasParamString(value=''),
             'close camera after measurement': MeasParamBool(value=False),
+            # A calibrated power meter watching the same signal through a tap, read once per
+            # exposure bracket. Its reading is the absolute spectrum; dividing the camera's counts
+            # by it gives counts/s/W, which should be flat across a sweep and so is a check on the
+            # camera path rather than a property of the device.
+            'read sphere power': MeasParamBool(value=True),
+            # What fraction of the signal the meter sees. The rest reaches the camera, so the two
+            # are related by (100 - this) / this - 9.0 for a 10:90 tap.
+            'tap fraction percent': MeasParamFloat(value=10.0, unit='%'),
+            # Whatever loss sits between the two arms that the split ratio alone does not describe.
+            # Measure it once, with a known source, and leave it.
+            'sphere calibration factor': MeasParamFloat(value=1.0),
+            # An integrating sphere's responsivity depends on wavelength and the meter corrects for
+            # it from whatever wavelength it was last told, so without this every point in a sweep
+            # is reported using the first point's responsivity.
+            'sphere wavelength tracking': MeasParamBool(value=True),
+            'sphere average time': MeasParamFloat(value=0.01, unit='s'),
+            # Right for a tap whose power moves a decade across the band. Turn it off, and set the
+            # range on the meter, when a range switch mid-sweep would cost more than it buys.
+            'sphere autoranging': MeasParamBool(value=True),
             'users comment': MeasParamString(value='')
         }
         cls._apply_saved_camera_settings(parameters)
@@ -368,12 +392,23 @@ class CameraSnapshot(Measurement):
             'save NPY': def_params['save NPY'],
             'image output directory': def_params['image output directory'],
             'close camera after measurement': def_params['close camera after measurement'],
+            'read sphere power': def_params['read sphere power'],
+            'tap fraction percent': def_params['tap fraction percent'],
+            'sphere calibration factor': def_params['sphere calibration factor'],
+            'sphere wavelength tracking': def_params['sphere wavelength tracking'],
+            'sphere average time': def_params['sphere average time'],
+            'sphere autoranging': def_params['sphere autoranging'],
             'users comment': def_params['users comment']
         }
 
     @staticmethod
     def get_wanted_instrument():
-        return ['Laser', 'Camera']
+        # The power meter is the second detector on the signal: an absolutely calibrated,
+        # wavelength-corrected reading of the same light the camera images, taken beside every
+        # exposure bracket. It is not required to be a real meter - on a bench whose only 'Power
+        # Meter' is the camera-backed one, algorithm() notices and skips the readings - so adding
+        # the role does not stop an existing setup from running this measurement.
+        return ['Laser', 'Camera', 'Power Meter']
 
     @staticmethod
     def _resolve_output_target(output_directory, data):
@@ -469,6 +504,140 @@ class CameraSnapshot(Measurement):
                     minimum, maximum,
                     "any" if len(outside) == len(wavelengths) else "{:d}".format(len(outside)),
                     len(wavelengths), outside[0]))
+
+    #
+    # the second detector: a calibrated power meter watching the same signal
+    #
+
+    def _setup_power_meter(self, read_sphere_power, average_time, autoranging, wavelengths):
+        """Open and configure the power meter, and say whether its readings should be recorded.
+
+        Returns False, rather than raising, for every reason a bench might legitimately have no
+        second detector: the role left unfilled, the readings switched off, or the only 'Power
+        Meter' being the camera-backed one. A measurement that used to run without a meter has to
+        keep running without one, so the absence of a meter is a description of the bench and not
+        a mistake.
+        """
+        if self.instr_pm is None:
+            self.logger.info("No power meter selected, so no calibrated power is recorded.")
+            return False
+        if not read_sphere_power:
+            self.logger.info("'read sphere power' is off, so the power meter is left untouched.")
+            return False
+        if getattr(type(self.instr_pm), 'IS_CAMERA_BACKED', False):
+            # The camera-as-power-meter sums the very frames this measurement is capturing, so its
+            # "power" is the counts already in the result file rather than an independent
+            # measurement of them. Select a real meter for the tap to get anything new.
+            self.logger.warning(
+                "The selected Power Meter (%s) is the camera itself, so it measures the same "
+                "frames this measurement captures rather than the signal independently. No "
+                "calibrated power is recorded. Select a separate meter for the tap arm.",
+                type(self.instr_pm).__name__)
+            return False
+
+        self.instr_pm.open()
+
+        if autoranging is not None:
+            try:
+                self.instr_pm.autoranging = bool(autoranging)
+            except Exception:
+                # not every meter exposes autoranging, and one that does not is still usable
+                self.logger.debug("Could not set the power meter's autoranging.", exc_info=True)
+        if average_time and average_time > 0.0:
+            try:
+                self.instr_pm.averagetime = float(average_time)
+            except Exception:
+                self.logger.debug("Could not set the power meter's averaging time.", exc_info=True)
+
+        self._check_meter_wavelengths(wavelengths)
+        return True
+
+    def _check_meter_wavelengths(self, wavelengths):
+        """Refuse a sweep outside the sensor's calibrated span, before any of it is captured.
+
+        Same reasoning as `_check_wavelengths_tunable`: finding out at wavelength 40 of 100 costs
+        the whole run up to that point.
+        """
+        span = getattr(self.instr_pm, 'wavelength_range', None)
+        if not span:
+            # a meter with no wavelength correction to speak of, which is fine - it just cannot be
+            # tuned, and the warning about that is the driver's to give
+            return
+        try:
+            minimum, maximum = float(span[0]), float(span[1])
+        except Exception:
+            self.logger.debug("Could not read the power meter's wavelength range.", exc_info=True)
+            return
+        outside = [wl for wl in wavelengths if wl < minimum or wl > maximum]
+        if outside:
+            raise ValueError(
+                "The power meter's sensor is calibrated from {:.3f} nm to {:.3f} nm, so it cannot "
+                "be corrected for {:d} of the {:d} wavelengths asked for, starting at {:.3f} nm. "
+                "Narrow the sweep, or turn 'sphere wavelength tracking' off to record uncorrected "
+                "readings.".format(minimum, maximum, len(outside), len(wavelengths), outside[0]))
+
+    def _set_meter_wavelength(self, wavelength):
+        """Point the sensor's responsivity correction at the wavelength now being measured.
+
+        Left to raise. A meter reading at the wrong responsivity produces numbers that look
+        perfectly reasonable and are wrong by a factor nobody can recover afterwards, which is
+        worse than a run that stops - and the range was checked before the first frame, so this
+        failing mid-sweep means something has genuinely gone wrong with the instrument.
+        """
+        self.instr_pm.wavelength = float(wavelength)
+
+    def _meter_wavelength_readback(self):
+        """What the meter says it is correcting for, for the record. Never raises."""
+        try:
+            return float(self.instr_pm.wavelength)
+        except Exception:
+            self.logger.debug("Could not read the power meter's wavelength back.", exc_info=True)
+            return float('nan')
+
+    @staticmethod
+    def _watt_to_dbm(watt):
+        """Watts to dBm, floored rather than -inf so the series stays plottable.
+
+        A dark sensor reads zero or slightly negative, and log of that is -inf, which poisons a
+        plot's axis limits and is not JSON serialisable. nan is kept as nan: it means the reading
+        failed, which is a different thing from a reading of no light.
+        """
+        if watt is None:
+            return float('nan')
+        if not math.isfinite(watt):
+            return float(watt)
+        if watt <= 0.0:
+            return MINIMUM_SPHERE_DBM
+        return max(MINIMUM_SPHERE_DBM, 10.0 * math.log10(watt * 1000.0))
+
+    def _read_meter_power(self):
+        """One reading, as (watts, over range, seconds taken). Never raises.
+
+        A read that fails is recorded as nan and counted rather than allowed to end the sweep: one
+        USB hiccup at wavelength 87 of 100 should cost one point, not the other 99. The count is
+        summarised at the end so a run full of them is not mistaken for a run of real zeroes.
+        """
+        started = perf_counter()
+        try:
+            if hasattr(self.instr_pm, 'read_power_watt'):
+                # linear watts whatever the meter's display unit is set to, which matters because
+                # Search for Peak sets every meter it touches to dBm
+                watt = float(self.instr_pm.read_power_watt())
+            else:
+                self.instr_pm.trigger()
+                watt = float(self.instr_pm.fetch_power())
+        except Exception as exc:
+            self._meter_failed_reads += 1
+            self.logger.debug("Power meter read failed: %r", exc)
+            return float('nan'), True, perf_counter() - started
+
+        # not every meter can tell an over-range reading from a real one; those just report the
+        # number they got, and a nan is the only signal left
+        reports_over_range = getattr(self.instr_pm, 'last_read_was_over_range', None)
+        over_range = not math.isfinite(watt)
+        if callable(reports_over_range):
+            over_range = over_range or bool(reports_over_range())
+        return watt, over_range, perf_counter() - started
 
     @staticmethod
     def _resolve_integration_roi(x, y, width, height, frame_width, frame_height):
@@ -671,6 +840,12 @@ class CameraSnapshot(Measurement):
                            parameters.get('integration ROI y').value,
                            parameters.get('integration ROI width').value,
                            parameters.get('integration ROI height').value)
+        read_sphere_power = parameters.get('read sphere power').value
+        tap_fraction_percent = parameters.get('tap fraction percent').value
+        sphere_calibration_factor = parameters.get('sphere calibration factor').value
+        track_sphere_wavelength = parameters.get('sphere wavelength tracking').value
+        sphere_average_time = parameters.get('sphere average time').value
+        sphere_autoranging = parameters.get('sphere autoranging').value
 
         if n_frames < 1:
             raise ValueError("number of frames must be at least 1, got {:d}.".format(n_frames))
@@ -688,6 +863,18 @@ class CameraSnapshot(Measurement):
             raise ValueError(
                 "wavelength settle time cannot be negative, got {:.3f} s.".format(
                     wavelength_settle_time))
+        if not 0.0 < tap_fraction_percent <= 100.0:
+            raise ValueError(
+                "tap fraction percent must be above 0 and at most 100, got {:.3f}.".format(
+                    tap_fraction_percent))
+        if sphere_calibration_factor <= 0.0:
+            raise ValueError(
+                "sphere calibration factor must be positive, got {:.3f}.".format(
+                    sphere_calibration_factor))
+        if sphere_average_time < 0.0:
+            raise ValueError(
+                "sphere average time cannot be negative, got {:.3f} s.".format(
+                    sphere_average_time))
         # raises on a step which cannot get from one end to the other, before the camera is touched
         wavelengths = self._sweep_wavelengths(laser_wavelength, wavelength_stop, wavelength_step)
         # Only the longest exposure needs checking against the timeout: the brackets below it are
@@ -720,16 +907,24 @@ class CameraSnapshot(Measurement):
         # get the instruments
         self.instr_camera = instruments['Camera']
         self.instr_laser = instruments['Laser']
+        self.instr_pm = instruments.get('Power Meter')
 
         # open connections
         self.instr_camera.open()
         self.instr_laser.open()
+
+        self._meter_failed_reads = 0
+        meter_enabled = self._setup_power_meter(
+            read_sphere_power, sphere_average_time, sphere_autoranging, wavelengths)
 
         if laser_enabled:
             self.instr_laser.unit = 'dBm'
             self._check_wavelengths_tunable(wavelengths)
             self.instr_laser.wavelength = wavelengths[0]
             self.instr_laser.power = laser_power
+        if meter_enabled and track_sphere_wavelength:
+            # the first point is set here rather than in the loop, which skips index 0
+            self._set_meter_wavelength(wavelengths[0])
 
         # Apply settings. The order matters: changing the pixel format or the ROI can move the
         # limits of the other features, so those go first.
@@ -822,6 +1017,10 @@ class CameraSnapshot(Measurement):
         std_counts = []
         saturated_fractions = []
         roi_sums = []
+        meter_powers_w = []
+        meter_wavelengths_nm = []
+        meter_over_range = []
+        meter_read_seconds = []
 
         # The laser is on for the whole capture: `with` enables it on the way in and switches it
         # off again on the way out, including if a capture raises, so a failed run cannot leave
@@ -856,6 +1055,10 @@ class CameraSnapshot(Measurement):
                                  list(integration_roi), integration_roi_note)
 
             roi_x, roi_y, roi_width, roi_height = integration_roi
+
+            # Auto exposure's frames are never recorded, so there is nothing to pair a reading
+            # with; one reading afterwards says what the light was doing while it ran.
+            meter_power_at_auto_exposure = self._read_meter_power()[0] if meter_enabled else None
 
             if auto_exposure:
                 auto_exposure_result = self._auto_expose(
@@ -897,8 +1100,15 @@ class CameraSnapshot(Measurement):
                 # after switching on covers it, so only the steps after it need tuning and waiting.
                 if laser_enabled and index > 0:
                     self.instr_laser.wavelength = wavelength
+                    if meter_enabled and track_sphere_wavelength:
+                        # before the settle, so the one wait covers both instruments
+                        self._set_meter_wavelength(wavelength)
                     if wavelength_settle_time > 0.0:
                         sleep(wavelength_settle_time)
+                # read back once per step, not per frame: it cannot change between the frames of
+                # one step, and a USB round trip per frame buys nothing
+                step_meter_wavelength = (
+                    self._meter_wavelength_readback() if meter_enabled else None)
                 first_index_here = len(frame_indices)
 
                 for bracket, bracket_exposure in enumerate(bracket_exposures):
@@ -910,6 +1120,12 @@ class CameraSnapshot(Measurement):
                     # Read back per bracket rather than trusting the request: this is the exposure
                     # the counts are divided by, and the camera snaps it onto its increment grid.
                     actual_exposure = float(self.instr_camera.exposure_time)
+
+                    # One reading per bracket, taken before the frames rather than between them,
+                    # so the camera keeps the batched burst below. Every frame of this bracket
+                    # carries this reading; 'bracket index' is what says they share it.
+                    if meter_enabled:
+                        bracket_power_w, bracket_over_range, bracket_read_s =                             self._read_meter_power()
 
                     if frame_delay > 0.0:
                         images = None  # captured one at a time below, so the delay is honoured
@@ -954,6 +1170,13 @@ class CameraSnapshot(Measurement):
                         # afterwards is exact, so nothing has to be held in memory for it.
                         roi_sums.append(PowerMeterCameraAlvium.integrate_patch(
                             image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]))
+                        if meter_enabled:
+                            # appended once per frame, including when the read failed, because
+                            # every series in data['values'] has to stay the same length
+                            meter_powers_w.append(bracket_power_w)
+                            meter_wavelengths_nm.append(step_meter_wavelength)
+                            meter_over_range.append(1.0 if bracket_over_range else 0.0)
+                            meter_read_seconds.append(bracket_read_s)
                         saturated = int(np.count_nonzero(image >= clip_level))
                         saturated_fractions.append(float(saturated / image.size))
                         if saturated and len(bracket_exposures) == 1:
@@ -1001,6 +1224,10 @@ class CameraSnapshot(Measurement):
                     if len(bracket_exposures) > 1:
                         self.instr_camera.exposure_time = bracket_exposure
                     dark_image = self.instr_camera.snap_photo(timeout_ms=int(frame_timeout))
+                    # The meter's own zero plus whatever light is still reaching it. Subtracting it
+                    # is what makes a reading at the dim end of a sweep mean anything, and it also
+                    # answers "was the light really off" with a number instead of an inference.
+                    dark_meter_power = self._read_meter_power()[0] if meter_enabled else None
                     dark_files = self._save_frame(
                         os.path.join(directory, "{:s}_dark{:03d}".format(stem, bracket)),
                         dark_image, save_tiff, save_png, save_npy)
@@ -1025,6 +1252,7 @@ class CameraSnapshot(Measurement):
                         'timestamp utc': datetime.now(timezone.utc).isoformat(),
                         'roi sum': PowerMeterCameraAlvium.integrate_patch(
                             dark_image[roi_y:roi_y + roi_height, roi_x:roi_x + roi_width]),
+                        'sphere power W': dark_meter_power,
                         'mean counts': float(np.mean(dark_image)),
                         'min counts': float(np.min(dark_image)),
                         'max counts': float(np.max(dark_image)),
@@ -1052,6 +1280,16 @@ class CameraSnapshot(Measurement):
         data['values']['saturated pixel fraction'] = saturated_fractions
         data['values']['roi sum counts'] = roi_sums
 
+        if meter_enabled:
+            # The calibrated reading, and the absolute spectrum: unlike the counts beside it this
+            # is in watts and needs no exposure to interpret.
+            data['values']['sphere power W'] = meter_powers_w
+            data['values']['sphere power dBm'] = [self._watt_to_dbm(w) for w in meter_powers_w]
+            # proof that the responsivity correction tracked the laser, rather than an assumption
+            data['values']['sphere meter wavelength nm'] = meter_wavelengths_nm
+            data['values']['sphere power over range'] = meter_over_range
+            data['values']['sphere read seconds'] = meter_read_seconds
+
         if dark_frames:
             # The mean is linear, so subtracting the dark's mean from a frame's mean is exact - no
             # need to keep the frames themselves in memory to do it. The corrected peak is not
@@ -1069,9 +1307,21 @@ class CameraSnapshot(Measurement):
             corrected_roi_sums = [roi_sum - dark_roi_sums[bracket]
                                   for roi_sum, bracket in zip(roi_sums, bracket_indices)]
             data['values']['dark corrected roi sum counts'] = corrected_roi_sums
+
+            if meter_enabled:
+                dark_meter_powers = {dark['bracket index']: dark['sphere power W']
+                                     for dark in dark_frames}
+                data['values']['dark sphere power W'] = [
+                    dark_meter_powers[b] for b in bracket_indices]
+                # unclipped at zero for the same reason as the counts above
+                corrected_meter_powers = [power - dark_meter_powers[bracket]
+                                          for power, bracket in zip(meter_powers_w,
+                                                                    bracket_indices)]
+                data['values']['dark corrected sphere power W'] = corrected_meter_powers
         else:
             corrected_means = mean_counts
             corrected_roi_sums = roi_sums
+            corrected_meter_powers = meter_powers_w
 
         # A count on its own only means something next to the exposure it was integrated over, so
         # these are the series to compare between points captured at different exposures - which is
@@ -1085,6 +1335,22 @@ class CameraSnapshot(Measurement):
             for counts, exposure in zip(corrected_roi_sums, frame_exposures)]
         data['values']['mean counts per second'] = [
             1e6 * counts / exposure for counts, exposure in zip(corrected_means, frame_exposures)]
+
+        if meter_enabled:
+            # What reaches the camera, from what reached the meter. The two arms differ by the
+            # splitter's ratio and by whatever else sits between them.
+            arm_ratio = (100.0 - tap_fraction_percent) / tap_fraction_percent
+            camera_arm_power = [power * arm_ratio * sphere_calibration_factor
+                                for power in corrected_meter_powers]
+            data['values']['camera arm power W'] = camera_arm_power
+            # The cross-calibration between the two detectors, and the reason for recording them
+            # together: it ties the camera's arbitrary counts to the meter's calibrated watts, so
+            # it should read flat across a sweep and a departure from flat indicts the camera path
+            # rather than the device. nan where there is no power to divide by - PlotControl
+            # filters those out with np.isfinite, where a zero would be plotted as a real point.
+            data['values']['roi counts per second per watt'] = [
+                (rate / power) if (math.isfinite(power) and power > 0.0) else float('nan')
+                for rate, power in zip(data['values']['roi counts per second'], camera_arm_power)]
 
         # one list per frame, since a frame can now be written in several formats
         data['measurement settings']['image files'] = file_names
@@ -1118,6 +1384,34 @@ class CameraSnapshot(Measurement):
         # pixel format, which is exactly the step that went wrong here
         data['measurement settings']['full scale counts'] = float(full_scale)
         data['measurement settings']['saturation count level'] = float(clip_level)
+
+        data['measurement settings']['sphere meter present'] = bool(meter_enabled)
+        if meter_enabled:
+            data['measurement settings']['sphere meter idn'] = str(self.instr_pm.idn())
+            data['measurement settings']['sphere meter sensor'] = getattr(
+                self.instr_pm, 'sensor_info', None)
+            # says which unit the numbers above are in, independent of whatever the meter's
+            # display unit happened to be set to by something else
+            data['measurement settings']['sphere meter unit'] = 'Watt'
+            data['measurement settings']['sphere meter wavelength tracking'] = bool(
+                track_sphere_wavelength)
+            data['measurement settings']['arm ratio'] = (
+                (100.0 - tap_fraction_percent) / tap_fraction_percent)
+            data['measurement settings']['sphere power during auto exposure W'] =                 meter_power_at_auto_exposure
+            data['measurement settings']['sphere over range frames'] = int(sum(meter_over_range))
+            data['measurement settings']['sphere failed reads'] = int(self._meter_failed_reads)
+            if meter_read_seconds:
+                data['measurement settings']['sphere read seconds total'] = float(
+                    sum(meter_read_seconds))
+                data['measurement settings']['sphere read seconds mean'] = float(
+                    sum(meter_read_seconds) / len(meter_read_seconds))
+            if self._meter_failed_reads:
+                # summarised once rather than warned per read, so a flaky connection is visible
+                # without burying the rest of the log
+                self.logger.warning(
+                    "%d of %d power meter reads failed and were recorded as nan.",
+                    self._meter_failed_reads, len(meter_powers_w))
+            self.instr_pm.close()
 
         self.instr_laser.close()
 

@@ -5,6 +5,7 @@ LabExT  Copyright (C) 2021  ETH Zurich and Polariton Technologies AG
 This program is free software and comes with ABSOLUTELY NO WARRANTY; for details see LICENSE file.
 """
 
+import json
 import os
 import tempfile
 import unittest
@@ -136,6 +137,71 @@ class StubLaser:
         self.camera.light = False
 
 
+class StubPowerMeter:
+    """A calibrated meter watching the same light the stub camera sees.
+
+    Reports a wavelength-dependent power so a sweep can be told apart from a repeat, and only when
+    the light is on, so the dark readings are a different number from the lit ones.
+    """
+
+    def __init__(self, camera, watt_at_1550=1e-3, slope_per_nm=1e-5, dark_watt=1e-9):
+        self.camera = camera
+        self.watt_at_1550 = watt_at_1550
+        self.slope_per_nm = slope_per_nm
+        self.dark_watt = dark_watt
+        self._wavelength = 1550.0
+        self.averagetime = 0.001
+        self.autoranging = True
+        self.unit = 'Watt'
+        self._last_over_range = False
+        #: every wavelength this was told to correct for, in order
+        self.wavelengths_set = []
+        #: how many readings were taken, to check the per-bracket cadence
+        self.reads = 0
+        #: set by a test to make the nth read raise
+        self.fail_on_read = None
+        self.opened = False
+        self.closed = False
+
+    wavelength_range = [800.0, 1700.0]
+
+    @property
+    def wavelength(self):
+        return self._wavelength
+
+    @wavelength.setter
+    def wavelength(self, value):
+        value = float(value)
+        low, high = self.wavelength_range
+        if not low <= value <= high:
+            raise ValueError("{:f} nm is outside the sensor's range".format(value))
+        self._wavelength = value
+        self.wavelengths_set.append(value)
+
+    def read_power_watt(self):
+        self.reads += 1
+        if self.fail_on_read is not None and self.reads == self.fail_on_read:
+            raise RuntimeError("stub read failure")
+        if not self.camera.light:
+            return self.dark_watt
+        return self.watt_at_1550 + self.slope_per_nm * (self._wavelength - 1550.0)
+
+    def open(self):
+        self.opened = True
+
+    def close(self):
+        self.closed = True
+
+    def idn(self):
+        return "StubPowerMeter"
+
+
+class StubCameraBackedMeter(StubPowerMeter):
+    """A meter which is really the camera, as PowerMeterCameraAlvium is."""
+
+    IS_CAMERA_BACKED = True
+
+
 class CameraSnapshotTest(unittest.TestCase):
     """
     Tests for the CameraSnapshot measurement, driven with a stub camera and laser.
@@ -157,7 +223,8 @@ class CameraSnapshotTest(unittest.TestCase):
     # helpers
     #
 
-    def run_algorithm(self, camera=None, stored_integration_roi=None, **overrides):
+    def run_algorithm(self, camera=None, stored_integration_roi=None, power_meter=None,
+                      **overrides):
         """Run the measurement once against the stubs and return `(data, parameters, camera)`.
 
         The Camera View's stored integration ROI is patched out unless a test asks for one: it is a
@@ -169,6 +236,7 @@ class CameraSnapshotTest(unittest.TestCase):
         # kept for the tests which check what the laser was told to do; the return value stays a
         # triple so every test does not have to unpack it
         self.laser = laser
+        self.power_meter = power_meter
         measurement = CameraSnapshot()
 
         parameters = measurement.parameters
@@ -196,8 +264,10 @@ class CameraSnapshotTest(unittest.TestCase):
             parameters.get('image output directory').value = directory
             with patch('LabExT.Measurements.CameraSnapshot.PowerMeterCameraAlvium'
                        '.load_integration_roi', return_value=stored_integration_roi):
-                measurement.algorithm(None, data=data,
-                                      instruments={'Camera': camera, 'Laser': laser},
+                instruments = {'Camera': camera, 'Laser': laser}
+                if power_meter is not None:
+                    instruments['Power Meter'] = power_meter
+                measurement.algorithm(None, data=data, instruments=instruments,
                                       parameters=parameters)
         measurement._check_data(data=data)
         return data, parameters, camera
@@ -564,3 +634,197 @@ class CameraSnapshotTest(unittest.TestCase):
         self.assertEqual([12345.0], data['values']['exposure time us'])
         self.assertEqual(1, data['measurement settings']['exposure brackets captured'])
         self.assertNotIn('auto exposure result', data['measurement settings'])
+
+    #
+    # the second detector: a calibrated power meter beside the camera
+    #
+
+    #: every series the meter adds, so a test can assert on the whole set at once
+    SPHERE_SERIES = {
+        'sphere power W', 'sphere power dBm', 'sphere meter wavelength nm',
+        'sphere power over range', 'sphere read seconds',
+    }
+
+    def test_no_power_meter_leaves_the_result_exactly_as_it_was(self):
+        """The regression that matters: a bench with no second detector is unaffected."""
+        data, _, _ = self.run_algorithm()
+
+        self.assertEqual(set(), self.SPHERE_SERIES & set(data['values']))
+        self.assertNotIn('camera arm power W', data['values'])
+        self.assertNotIn('roi counts per second per watt', data['values'])
+        self.assertFalse(data['measurement settings']['sphere meter present'])
+
+    def test_camera_backed_meter_is_refused_rather_than_read(self):
+        """A meter which is the camera measures frames already in the file, so it is skipped."""
+        camera = StubCamera()
+        meter = StubCameraBackedMeter(camera)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter)
+
+        self.assertEqual(0, meter.reads)
+        self.assertFalse(meter.opened)
+        self.assertEqual(set(), self.SPHERE_SERIES & set(data['values']))
+        self.assertFalse(data['measurement settings']['sphere meter present'])
+
+    def test_read_sphere_power_off_leaves_the_meter_untouched(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter,
+                                        **{'read sphere power': False})
+
+        self.assertEqual(0, meter.reads)
+        self.assertFalse(meter.opened)
+        self.assertEqual([], meter.wavelengths_set)
+        self.assertFalse(data['measurement settings']['sphere meter present'])
+
+    def test_every_series_stays_the_same_length_as_the_frames(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(
+            camera=camera, power_meter=meter,
+            **{'wavelength stop': 1560.0, 'wavelength step': 5.0, 'exposure brackets': 2,
+               'number of frames': 3})
+
+        expected = 3 * 2 * 3  # wavelengths x brackets x frames
+        self.assertEqual(expected, len(data['values']['frame index']))
+        for name, series in data['values'].items():
+            self.assertEqual(expected, len(series), name)
+
+    def test_one_reading_per_bracket_shared_by_that_brackets_frames(self):
+        """The cadence chosen so the camera keeps its batched burst: per bracket, not per frame."""
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(
+            camera=camera, power_meter=meter,
+            **{'exposure brackets': 2, 'number of frames': 2})
+
+        # one per bracket, plus the single reading taken over the auto exposure phase
+        self.assertEqual(3, meter.reads)
+        powers = data['values']['sphere power W']
+        self.assertEqual(4, len(powers))
+        self.assertEqual(powers[0], powers[1])
+        self.assertEqual(powers[2], powers[3])
+
+    def test_the_meter_tracks_the_laser_wavelength(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(
+            camera=camera, power_meter=meter,
+            **{'laser wavelength': 1540.0, 'wavelength stop': 1560.0, 'wavelength step': 10.0})
+
+        self.assertEqual([1540.0, 1550.0, 1560.0], meter.wavelengths_set)
+        self.assertEqual([1540.0, 1550.0, 1560.0], data['values']['sphere meter wavelength nm'])
+        # and the reading follows it, so a sweep is distinguishable from a repeat
+        self.assertEqual(3, len(set(data['values']['sphere power W'])))
+
+    def test_wavelength_tracking_can_be_turned_off(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        self.run_algorithm(camera=camera, power_meter=meter,
+                           **{'wavelength stop': 1560.0, 'wavelength step': 10.0,
+                              'sphere wavelength tracking': False})
+
+        self.assertEqual([], meter.wavelengths_set)
+
+    def test_a_sweep_the_sensor_cannot_be_corrected_for_is_refused_before_capture(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        meter.wavelength_range = [1545.0, 1555.0]
+
+        with self.assertRaises(ValueError) as raised:
+            self.run_algorithm(camera=camera, power_meter=meter,
+                               **{'laser wavelength': 1530.0, 'wavelength stop': 1570.0,
+                                  'wavelength step': 10.0})
+
+        self.assertIn('calibrated', str(raised.exception))
+        self.assertEqual(0, meter.reads)
+
+    def test_camera_arm_power_follows_the_split_ratio(self):
+        for tap_percent, expected_ratio in ((10.0, 9.0), (20.0, 4.0), (50.0, 1.0)):
+            camera = StubCamera()
+            meter = StubPowerMeter(camera, slope_per_nm=0.0)
+            data, _, _ = self.run_algorithm(camera=camera, power_meter=meter,
+                                            **{'tap fraction percent': tap_percent})
+
+            self.assertAlmostEqual(expected_ratio,
+                                   data['measurement settings']['arm ratio'], places=9)
+            self.assertAlmostEqual(meter.watt_at_1550 * expected_ratio,
+                                   data['values']['camera arm power W'][0], places=12)
+
+    def test_calibration_factor_scales_the_camera_arm_power(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera, slope_per_nm=0.0)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter,
+                                        **{'tap fraction percent': 10.0,
+                                           'sphere calibration factor': 0.5})
+
+        self.assertAlmostEqual(meter.watt_at_1550 * 9.0 * 0.5,
+                               data['values']['camera arm power W'][0], places=12)
+
+    def test_counts_per_watt_is_the_quotient_of_the_two_detectors(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(
+            camera=camera, power_meter=meter,
+            **{'wavelength stop': 1560.0, 'wavelength step': 5.0})
+
+        for rate, power, quotient in zip(data['values']['roi counts per second'],
+                                         data['values']['camera arm power W'],
+                                         data['values']['roi counts per second per watt']):
+            self.assertAlmostEqual(rate / power, quotient, places=6)
+
+    def test_zero_power_gives_nan_rather_than_a_plottable_zero(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera, watt_at_1550=0.0, slope_per_nm=0.0)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter)
+
+        self.assertTrue(np.isnan(data['values']['roi counts per second per watt'][0]))
+        # and the dBm series floors instead of going to minus infinity
+        self.assertEqual(-300.0, data['values']['sphere power dBm'][0])
+
+    def test_a_failed_read_costs_one_point_not_the_sweep(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        meter.fail_on_read = 3
+        data, _, _ = self.run_algorithm(
+            camera=camera, power_meter=meter,
+            **{'wavelength stop': 1570.0, 'wavelength step': 5.0})
+
+        powers = data['values']['sphere power W']
+        self.assertEqual(5, len(powers))
+        self.assertEqual(1, sum(1 for value in powers if np.isnan(value)))
+        self.assertEqual(1, data['measurement settings']['sphere failed reads'])
+        for series in data['values'].values():
+            self.assertEqual(5, len(series))
+
+    def test_dark_frames_carry_a_reading_and_are_subtracted(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter,
+                                        **{'capture dark frame': True})
+
+        dark = data['measurement settings']['dark frames'][0]
+        self.assertAlmostEqual(meter.dark_watt, dark['sphere power W'], places=15)
+        self.assertAlmostEqual(meter.dark_watt, data['values']['dark sphere power W'][0], places=15)
+        self.assertAlmostEqual(meter.watt_at_1550 - meter.dark_watt,
+                               data['values']['dark corrected sphere power W'][0], places=12)
+
+    def test_the_meter_is_configured_and_closed(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter,
+                                        **{'sphere average time': 0.02,
+                                           'sphere autoranging': False})
+
+        self.assertTrue(meter.opened)
+        self.assertTrue(meter.closed)
+        self.assertEqual(0.02, meter.averagetime)
+        self.assertFalse(meter.autoranging)
+        self.assertEqual('StubPowerMeter', data['measurement settings']['sphere meter idn'])
+        self.assertEqual('Watt', data['measurement settings']['sphere meter unit'])
+
+    def test_the_result_survives_json_with_nan_in_it(self):
+        camera = StubCamera()
+        meter = StubPowerMeter(camera, watt_at_1550=0.0, slope_per_nm=0.0)
+        data, _, _ = self.run_algorithm(camera=camera, power_meter=meter)
+
+        self.assertTrue(json.dumps(dict(data)))

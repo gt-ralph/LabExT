@@ -68,6 +68,12 @@ measurement. Search for Peak then runs once per device, which is what you want.
 | save TIFF / PNG / NPY | **all off** for the bulk run | see the budget |
 | image output directory | a relative name lands next to the result file | |
 | close camera after measurement | off | keeps LabExT from re-opening the camera for every metadata read |
+| **read sphere power** | **on** if a real meter is on the tap | see the two-detector section below |
+| **tap fraction percent** | the tap arm of your splitter, 10 for a 10:90 | wrong here scales every watt in the file |
+| sphere calibration factor | 1, until you have measured it | whatever loss the split ratio alone does not describe |
+| sphere wavelength tracking | on | an integrating sphere's responsivity depends on wavelength |
+| sphere average time | 0.01 s | the read costs roughly twice this |
+| sphere autoranging | on | off, with the range set on the meter, for tight timing |
 
 In the wizard, select the devices and add `CameraSnapshot`; leave its parameter sweep empty. The
 capture-shape settings - brackets, bracket factor, dark frame, auto exposure, settle times, sweep
@@ -124,6 +130,36 @@ worth discarding rather than trusting.
 Set the region by hand instead when the devices all put their beam in the same place, or when the
 fit picks something you can see is wrong. Check it once on a live image and leave it fixed.
 
+## Two detectors on one signal
+
+With a splitter in the path and a calibrated power meter on the tap arm, every exposure bracket
+gets a power reading beside it. The meter is not a reference channel watching the laser - it is
+looking at the same post-device signal the camera is - so what it adds is an absolute scale and a
+second opinion:
+
+- **`sphere power W` is the absolute spectrum.** Unlike the counts beside it, it needs no exposure
+  to interpret and no bracket to be chosen: watts at a wavelength. Divide a device run by a
+  normalisation run taken with the device out of the path and what is left is the device.
+- **`roi counts per second per watt` is the cross-calibration**, and the series to watch. It ties
+  the camera's arbitrary counts to the meter's calibrated watts, so across a sweep it should read
+  *flat*. Where it is not flat, the camera path is the suspect - clipping, a dark subtraction that
+  did not apply, an integration region that moved - because the device's own response has already
+  divided out of it. That is a different and stronger check than cross-bracket agreement, which
+  only says the ladder is self-consistent.
+- **The brackets at one wavelength are free repeats.** The sphere reading does not depend on the
+  camera's exposure, so the several brackets at a point give several nominally identical readings.
+  Their spread is a drift and noise estimate that costs nothing to collect.
+
+Select the meter under the **Power Meter** role. On a bench whose only entry there is
+`PowerMeterCameraAlvium` - the camera pretending to be a meter, which is what Search for Peak uses
+here - the measurement notices, says so in the log, and records no power at all rather than
+reporting the camera's own counts back as an independent measurement. Add the real meter as a
+second entry in that section of `instruments.config` and pick it in the wizard.
+
+Set **tap fraction percent** to your splitter's tap arm. `camera arm power W` is the reading scaled
+by `(100 - tap) / tap` and by the calibration factor, and everything normalised is normalised by
+that, so a value that does not match the hardware scales the whole file.
+
 ## Budgets
 
 **Data.** A frame is `width × height × 2` bytes for any 16-bit format, and a device costs
@@ -134,6 +170,12 @@ and keep images only for the one validation device you check by hand.
 
 **Time.** Roughly `wavelengths × (settle + brackets × frames × exposure)` plus the search and the
 stage move, per device.
+
+The power meter adds `wavelengths × brackets × read`, one read per bracket rather than per frame so
+that the camera keeps its batched burst. Measured here, a read at the default 0.01 s averaging took
+about 20 ms - roughly twice the averaging time. That is 8 s over a 100-wavelength, 4-bracket sweep,
+which is nothing beside the exposures; `sphere read seconds` in the result file is there so you can
+check that against your own meter rather than trusting this number.
 
 ## What to check when it finishes
 
@@ -154,11 +196,24 @@ row is. Plot against `wavelength nm` and remember there is one row per bracket: 
 - **`dark frames`** - a "dark frame is not dark" warning means light is still reaching the sensor
   inside the region: lengthen the laser settle time or close up the enclosure.
 - **`mean counts per second`** - do not use this one. It is whole-frame, for the reason above.
+- **`sphere power W`** - the absolute spectrum, when a power meter was on the tap. One reading per
+  bracket, repeated across that bracket's frames, so a comb here is the brackets and not the data.
+- **`roi counts per second per watt`** - flat is what you want. See the two-detector section above.
+- **`sphere power over range`** and **`sphere failed reads`** - a run with either of these non-zero
+  has points the meter did not actually measure; they are `nan` rather than zero, so they drop out
+  of a plot instead of appearing as real readings.
+- **`dark sphere power W`** - the meter's own zero plus whatever light still reaches it. Orders of
+  magnitude below the live readings, or the tap arm is not dark when the frames say it should be.
 
 Analysis recipe: per wavelength, take the longest bracket whose `saturated pixel fraction` is zero,
 and use its `roi counts per second`. A reference sweep with the device out of the path turns the
 result into the device's own response rather than the response of everything in the path, the
 laser's power flatness included.
+
+With a power meter on the tap the absolute scale comes from `sphere power W` instead, and the
+reference sweep is then calibrating out the system optics rather than supplying the scale. The
+normalisation run is the same measurement with the device out of the path; divide the two on their
+shared `wavelength nm` axis.
 
 ## Characterising a new camera or setup
 
@@ -188,6 +243,11 @@ Worth doing once, and each one takes a single run:
   config does not remove it from a window that once had it selected. Re-select the role and save.
 - **A dark frame is only valid at its own exposure and gain.** That is why they are taken per
   bracket and per run rather than stored.
+- **Thorlabs Optical Power Monitor holds the meter.** A TLPM session is exclusive, so the GUI and
+  LabExT cannot both have the PM100USB. Close it before a run; the driver's error says as much.
+- **A tap fraction that does not match the splitter** silently scales every watt in the file, and
+  nothing in the result contradicts it. It is worth measuring once rather than reading off the
+  splitter's label.
 - **A frame median is not a substitute for a dark frame** for absolute readings. It is contaminated
   by the beam's own diffuse light, by an amount that changes with coupling, so it cannot be
   calibrated out. It is fine for a peak search, which only compares readings to each other.
